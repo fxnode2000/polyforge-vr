@@ -1,0 +1,776 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>PolyForge VR</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#000; overflow:hidden; font-family: monospace; }
+  #overlay {
+    position:fixed; inset:0; background:rgba(0,0,15,0.92);
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    color:#8af; z-index:10;
+  }
+  #overlay h1 { font-size:2rem; letter-spacing:0.2em; margin-bottom:0.5rem; }
+  #overlay p  { color:#556; font-size:0.85rem; margin-bottom:2rem; letter-spacing:0.05em; }
+  #overlay .hint { font-size:0.75rem; color:#334; margin-top:1.5rem; max-width:380px; text-align:center; line-height:1.6; }
+  #enter-btn {
+    padding:14px 40px; font-size:1rem; letter-spacing:0.15em; font-family:monospace;
+    background:transparent; color:#8af; border:1px solid #336; border-radius:4px; cursor:pointer;
+    transition:all 0.2s;
+  }
+  #enter-btn:hover { background:#112; border-color:#8af; }
+  #enter-btn:disabled { color:#334; border-color:#222; cursor:not-allowed; }
+  #status { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); color:#446; font-size:11px; z-index:5; }
+  #no-xr { display:none; color:#833; font-size:0.85rem; margin-top:1rem; }
+</style>
+</head>
+<body>
+
+<div id="overlay">
+  <h1>POLYFORGE VR</h1>
+  <p>Hand-tracked polygonal modeller · Meta Quest</p>
+  <button id="enter-btn">ENTER VR</button>
+  <div id="no-xr">WebXR not available — open in Quest Browser</div>
+  <div class="hint">
+    <strong style="color:#8af">Gestures:</strong><br>
+    Pinch (index+thumb) · hover over geometry to highlight · pinch to select<br>
+    Two-hand pinch + spread apart → extrude face<br>
+    Pinch + hold on vertex/face → drag to move<br>
+    Fist with right hand → cycle edit mode<br>
+    Fist with left hand → add new cube
+  </div>
+</div>
+
+<div id="status"></div>
+<canvas id="c"></canvas>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// ─── RENDERER ──────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('c'), antialias: true, alpha: true });
+renderer.setPixelRatio(devicePixelRatio);
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.xr.enabled = true;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+// ─── SCENE ─────────────────────────────────────────────────────────────────
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x050508);
+
+const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 100);
+camera.position.set(0, 1.6, 2.5);
+
+// Lights
+scene.add(new THREE.AmbientLight(0x223355, 1.5));
+const sun = new THREE.DirectionalLight(0x99bbff, 1.5);
+sun.position.set(3, 8, 5);
+sun.castShadow = true;
+scene.add(sun);
+scene.add(new THREE.DirectionalLight(0x224422, 0.5).position.set(-4,-2,-4) && new THREE.DirectionalLight(0x224422, 0.5));
+
+// Floor grid
+const gridHelper = new THREE.GridHelper(6, 24, 0x112233, 0x0a1520);
+gridHelper.position.y = 0;
+scene.add(gridHelper);
+
+// Floor plane (for shadow receiving)
+const floorGeo = new THREE.PlaneGeometry(10,10);
+const floorMat = new THREE.ShadowMaterial({ opacity: 0.3 });
+const floor = new THREE.Mesh(floorGeo, floorMat);
+floor.rotation.x = -Math.PI/2;
+floor.receiveShadow = true;
+scene.add(floor);
+
+// ─── EDIT MODE STATE ───────────────────────────────────────────────────────
+const MODES = ['object','vertex','face'];
+let modeIdx = 0;
+let editMode = MODES[modeIdx];
+
+// ─── EDITABLE MESH ─────────────────────────────────────────────────────────
+let meshObjects = [];
+let selectedObject = null;
+let selectedVerts = new Set();
+let selectedFaces = new Set();
+
+function buildCubeData() {
+  const s = 0.15; // small for VR — palm-sized
+  const v = [
+    new THREE.Vector3(-s,-s,-s), new THREE.Vector3(s,-s,-s),
+    new THREE.Vector3(s,s,-s),   new THREE.Vector3(-s,s,-s),
+    new THREE.Vector3(-s,-s,s),  new THREE.Vector3(s,-s,s),
+    new THREE.Vector3(s,s,s),    new THREE.Vector3(-s,s,s),
+  ];
+  const q = [
+    {a:0,b:1,c:2,d:3},{a:5,b:4,c:7,d:6},
+    {a:4,b:0,c:3,d:7},{a:1,b:5,c:6,d:2},
+    {a:3,b:2,c:6,d:7},{a:4,b:5,c:1,d:0},
+  ];
+  return { verts:v, quads:q };
+}
+
+function quadsToGeo(verts, quads) {
+  const positions = [], normals = [];
+  for (const q of quads) {
+    const va=verts[q.a],vb=verts[q.b],vc=verts[q.c],vd=verts[q.d];
+    const n = new THREE.Vector3().crossVectors(
+      new THREE.Vector3().subVectors(vb,va),
+      new THREE.Vector3().subVectors(vc,va)
+    ).normalize();
+    positions.push(va.x,va.y,va.z,vb.x,vb.y,vb.z,vc.x,vc.y,vc.z,
+                   va.x,va.y,va.z,vc.x,vc.y,vc.z,vd.x,vd.y,vd.z);
+    for(let i=0;i<6;i++) normals.push(n.x,n.y,n.z);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions,3));
+  geo.setAttribute('normal',   new THREE.Float32BufferAttribute(normals,3));
+  return geo;
+}
+
+function createMeshObject(data, position) {
+  const meshObj = { verts: data.verts.map(v=>v.clone()), quads: [...data.quads] };
+  const geo = quadsToGeo(meshObj.verts, meshObj.quads);
+  const mat = new THREE.MeshLambertMaterial({ color:0x1e4488, side:THREE.DoubleSide });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.castShadow = true;
+  if (position) mesh.position.copy(position);
+  else mesh.position.set(0, 1.2, -0.5);
+  scene.add(mesh);
+
+  const wireGeo = new THREE.EdgesGeometry(geo);
+  const wire = new THREE.LineSegments(wireGeo, new THREE.LineBasicMaterial({ color:0x4466aa }));
+  mesh.add(wire);
+
+  const obj = { mesh, wire, meshObj, geo, wireGeo, gizmos:[] };
+
+  obj.rebuild = function() {
+    const newGeo = quadsToGeo(meshObj.verts, meshObj.quads);
+    const attr = newGeo.getAttribute('position');
+    mesh.geometry.setAttribute('position', attr);
+    mesh.geometry.setAttribute('normal', newGeo.getAttribute('normal'));
+    mesh.geometry.computeBoundingSphere();
+    wire.geometry.dispose();
+    wire.geometry = new THREE.EdgesGeometry(mesh.geometry);
+  };
+
+  meshObjects.push(obj);
+  return obj;
+}
+
+// Create initial cube at arm's reach
+const firstObj = createMeshObject(buildCubeData(), new THREE.Vector3(0, 1.2, -0.5));
+selectedObject = firstObj;
+firstObj.mesh.material.color.setHex(0x2255cc);
+
+// ─── HAND TRACKING ─────────────────────────────────────────────────────────
+// Joint indices (WebXR Hand API)
+const WRIST = 0;
+const THUMB_TIP = 4;
+const INDEX_TIP = 8;
+const MIDDLE_TIP = 12;
+const RING_TIP = 16;
+const PINKY_TIP = 20;
+const INDEX_MCP = 5; // knuckle
+
+let hands = { left: null, right: null };
+let handSpaces = { left: null, right: null };
+
+// Hand state
+let handState = {
+  left:  { pinch: false, pinchJustDown: false, pinchJustUp: false, fist: false, fistJustDown: false, pos: new THREE.Vector3(), tipL: new THREE.Vector3(), tipR: new THREE.Vector3() },
+  right: { pinch: false, pinchJustDown: false, pinchJustUp: false, fist: false, fistJustDown: false, pos: new THREE.Vector3(), tipL: new THREE.Vector3(), tipR: new THREE.Vector3() },
+};
+let prevHandState = { left: { pinch:false, fist:false }, right: { pinch:false, fist:false } };
+
+// Visual hand meshes (simple spheres per joint)
+const jointGeo = new THREE.SphereGeometry(0.008, 8, 8);
+const jointMat = new THREE.MeshBasicMaterial({ color: 0x88aaff });
+const pinchIndicatorMat = new THREE.MeshBasicMaterial({ color: 0xff8833 });
+
+function makeHandVisual() {
+  const group = new THREE.Group();
+  const joints = [];
+  for (let i = 0; i < 25; i++) {
+    const m = new THREE.Mesh(jointGeo, jointMat.clone());
+    group.add(m);
+    joints.push(m);
+  }
+  scene.add(group);
+  return { group, joints };
+}
+
+const leftHandVis  = makeHandVisual();
+const rightHandVis = makeHandVisual();
+
+// Pinch cursor sphere
+const cursorGeo = new THREE.SphereGeometry(0.012, 12, 12);
+const cursorMatL = new THREE.MeshBasicMaterial({ color: 0x4488ff, transparent:true, opacity:0.8 });
+const cursorMatR = new THREE.MeshBasicMaterial({ color: 0xff8833, transparent:true, opacity:0.8 });
+const cursorL = new THREE.Mesh(cursorGeo, cursorMatL);
+const cursorR = new THREE.Mesh(cursorGeo, cursorMatR);
+scene.add(cursorL); scene.add(cursorR);
+
+// ─── GIZMO POOLS ───────────────────────────────────────────────────────────
+let vertDots = [];
+let faceHighlights = [];
+const vertDotGeo = new THREE.SphereGeometry(0.012, 8, 8);
+const vertMatIdle = new THREE.MeshBasicMaterial({ color: 0x4466cc });
+const vertMatSel  = new THREE.MeshBasicMaterial({ color: 0xff8833 });
+const faceMatIdle = new THREE.MeshBasicMaterial({ color: 0x3366ff, transparent:true, opacity:0.2, side:THREE.DoubleSide, depthTest:false });
+const faceMatSel  = new THREE.MeshBasicMaterial({ color: 0xff7700, transparent:true, opacity:0.5, side:THREE.DoubleSide, depthTest:false });
+
+const gizmoGroup = new THREE.Group();
+scene.add(gizmoGroup);
+
+function clearGizmos() {
+  while(gizmoGroup.children.length) gizmoGroup.remove(gizmoGroup.children[0]);
+  vertDots = []; faceHighlights = [];
+}
+
+function buildVertexGizmos() {
+  if (!selectedObject) return;
+  const { meshObj, mesh } = selectedObject;
+  for (let i = 0; i < meshObj.verts.length; i++) {
+    const dot = new THREE.Mesh(vertDotGeo, vertMatIdle.clone());
+    dot.position.copy(meshObj.verts[i]).add(mesh.position);
+    dot.userData.vertIdx = i;
+    gizmoGroup.add(dot);
+    vertDots.push(dot);
+  }
+}
+
+function buildFaceGizmos() {
+  if (!selectedObject) return;
+  const { meshObj, mesh } = selectedObject;
+  for (let fi = 0; fi < meshObj.quads.length; fi++) {
+    const q = meshObj.quads[fi];
+    const va=meshObj.verts[q.a],vb=meshObj.verts[q.b],vc=meshObj.verts[q.c],vd=meshObj.verts[q.d];
+    const positions = [
+      va.x,va.y,va.z, vb.x,vb.y,vb.z, vc.x,vc.y,vc.z,
+      va.x,va.y,va.z, vc.x,vc.y,vc.z, vd.x,vd.y,vd.z,
+    ];
+    const fGeo = new THREE.BufferGeometry();
+    fGeo.setAttribute('position', new THREE.Float32BufferAttribute(positions,3));
+    const fMesh = new THREE.Mesh(fGeo, faceMatIdle.clone());
+    fMesh.position.copy(mesh.position);
+    fMesh.userData.faceIdx = fi;
+    gizmoGroup.add(fMesh);
+    faceHighlights.push(fMesh);
+  }
+}
+
+function rebuildGizmos() {
+  clearGizmos();
+  if (!selectedObject) return;
+  if (editMode === 'vertex') buildVertexGizmos();
+  else if (editMode === 'face') buildFaceGizmos();
+}
+
+function updateGizmoColors() {
+  if (editMode === 'vertex') {
+    for (const d of vertDots) {
+      d.material.color.setHex(selectedVerts.has(d.userData.vertIdx) ? 0xff8833 : 0x4466cc);
+    }
+  } else if (editMode === 'face') {
+    for (const f of faceHighlights) {
+      const sel = selectedFaces.has(f.userData.faceIdx);
+      f.material.color.setHex(sel ? 0xff7700 : 0x3366ff);
+      f.material.opacity = sel ? 0.5 : 0.2;
+    }
+  }
+}
+
+function syncGizmoPositions() {
+  if (!selectedObject) return;
+  const { meshObj, mesh } = selectedObject;
+  if (editMode === 'vertex') {
+    for (const d of vertDots) {
+      d.position.copy(meshObj.verts[d.userData.vertIdx]).add(mesh.position);
+    }
+  } else if (editMode === 'face') {
+    for (const fg of faceHighlights) {
+      const fi = fg.userData.faceIdx;
+      if (fi >= meshObj.quads.length) continue;
+      const q = meshObj.quads[fi];
+      const va=meshObj.verts[q.a],vb=meshObj.verts[q.b],vc=meshObj.verts[q.c],vd=meshObj.verts[q.d];
+      const positions = [
+        va.x,va.y,va.z,vb.x,vb.y,vb.z,vc.x,vc.y,vc.z,
+        va.x,va.y,va.z,vc.x,vc.y,vc.z,vd.x,vd.y,vd.z,
+      ];
+      fg.geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions,3));
+      fg.position.copy(mesh.position);
+    }
+  }
+}
+
+// ─── HOVER DETECTION ───────────────────────────────────────────────────────
+let hoveredVert = -1;
+let hoveredFace = -1;
+let hoveredObj  = null;
+
+const _tmpSphere = new THREE.Sphere();
+
+function detectHover(tipPos) {
+  hoveredVert = -1; hoveredFace = -1; hoveredObj = null;
+  const HOVER_R = 0.04;
+
+  if (editMode === 'vertex') {
+    for (const d of vertDots) {
+      if (d.position.distanceTo(tipPos) < HOVER_R) {
+        hoveredVert = d.userData.vertIdx;
+        return;
+      }
+    }
+  } else if (editMode === 'face') {
+    for (const fg of faceHighlights) {
+      const center = new THREE.Vector3();
+      const pos = fg.geometry.getAttribute('position');
+      for (let i=0;i<pos.count;i++) center.x+=pos.getX(i),center.y+=pos.getY(i),center.z+=pos.getZ(i);
+      center.divideScalar(pos.count).add(fg.position);
+      if (center.distanceTo(tipPos) < HOVER_R*2) {
+        hoveredFace = fg.userData.faceIdx;
+        return;
+      }
+    }
+  } else if (editMode === 'object') {
+    for (const o of meshObjects) {
+      o.mesh.geometry.computeBoundingSphere();
+      const bs = o.mesh.geometry.boundingSphere.clone();
+      bs.center.add(o.mesh.position);
+      bs.radius += 0.03;
+      if (bs.containsPoint(tipPos)) { hoveredObj = o; return; }
+    }
+  }
+}
+
+// ─── DRAG STATE ─────────────────────────────────────────────────────────────
+let dragging = null; // { type, hand, startTip, origPositions }
+
+// ─── OPERATION: EXTRUDE ─────────────────────────────────────────────────────
+function extrudeSelected() {
+  if (!selectedObject || selectedFaces.size === 0) return;
+  const { meshObj } = selectedObject;
+  for (const fi of selectedFaces) {
+    const q = meshObj.quads[fi];
+    const va=meshObj.verts[q.a],vb=meshObj.verts[q.b],vc=meshObj.verts[q.c],vd=meshObj.verts[q.d];
+    const n = new THREE.Vector3().crossVectors(
+      new THREE.Vector3().subVectors(vb,va), new THREE.Vector3().subVectors(vc,va)
+    ).normalize().multiplyScalar(0.06);
+    const na = meshObj.verts.length;
+    meshObj.verts.push(va.clone().add(n),vb.clone().add(n),vc.clone().add(n),vd.clone().add(n));
+    const nb=na+1,nc=na+2,nd=na+3;
+    meshObj.quads[fi]={a:na,b:nb,c:nc,d:nd};
+    meshObj.quads.push({a:q.a,b:q.b,c:nb,d:na},{a:q.b,b:q.c,c:nc,d:nb},{a:q.c,b:q.d,c:nd,d:nc},{a:q.d,b:q.a,c:na,d:nd});
+  }
+  selectedFaces.clear();
+  selectedObject.rebuild();
+  rebuildGizmos();
+}
+
+// ─── FLOATING HUD (VR) ──────────────────────────────────────────────────────
+// We draw a simple 3D text billboard that follows the user's left hand wrist
+// Using a canvas texture for the HUD
+const hudCanvas = document.createElement('canvas');
+hudCanvas.width = 256; hudCanvas.height = 128;
+const hudCtx = hudCanvas.getContext('2d');
+const hudTex = new THREE.CanvasTexture(hudCanvas);
+const hudMat = new THREE.MeshBasicMaterial({ map:hudTex, transparent:true, side:THREE.DoubleSide, depthTest:false });
+const hudMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.18, 0.09), hudMat);
+scene.add(hudMesh);
+
+function updateHUD() {
+  hudCtx.clearRect(0,0,256,128);
+  hudCtx.fillStyle = 'rgba(5,10,30,0.85)';
+  roundRect(hudCtx, 2, 2, 252, 124, 12);
+  hudCtx.fill();
+  hudCtx.strokeStyle = '#224466';
+  hudCtx.lineWidth = 1.5;
+  roundRect(hudCtx, 2, 2, 252, 124, 12);
+  hudCtx.stroke();
+
+  hudCtx.fillStyle = '#7b9cff';
+  hudCtx.font = 'bold 18px monospace';
+  hudCtx.textAlign = 'center';
+  hudCtx.fillText('POLYFORGE', 128, 28);
+
+  hudCtx.fillStyle = '#557799';
+  hudCtx.font = '13px monospace';
+  hudCtx.fillText(`MODE: ${editMode.toUpperCase()}`, 128, 52);
+
+  const selCount = editMode==='vertex' ? selectedVerts.size : editMode==='face' ? selectedFaces.size : (selectedObject?1:0);
+  hudCtx.fillStyle = selCount > 0 ? '#ff8833' : '#334455';
+  hudCtx.fillText(`SEL: ${selCount}`, 128, 72);
+
+  hudCtx.fillStyle = '#223344';
+  hudCtx.font = '10px monospace';
+  hudCtx.fillText('R-FIST: mode  L-FIST: add', 128, 96);
+  hudCtx.fillText('PINCH: select  2-HAND: extrude', 128, 112);
+
+  hudTex.needsUpdate = true;
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x+r, y);
+  ctx.lineTo(x+w-r, y);
+  ctx.quadraticCurveTo(x+w, y, x+w, y+r);
+  ctx.lineTo(x+w, y+h-r);
+  ctx.quadraticCurveTo(x+w, y+h, x+w-r, y+h);
+  ctx.lineTo(x+r, y+h);
+  ctx.quadraticCurveTo(x, y+h, x, y+h-r);
+  ctx.lineTo(x, y+r);
+  ctx.quadraticCurveTo(x, y, x+r, y);
+  ctx.closePath();
+}
+
+// ─── GESTURE DEBOUNCE ───────────────────────────────────────────────────────
+let lastModeChange = 0;
+let lastAddCube = 0;
+let lastExtrude = 0;
+let bothPinchedAt = 0;
+let bothPinchDistance = 0;
+
+// ─── XR SESSION SETUP ───────────────────────────────────────────────────────
+let xrSession = null;
+let xrRefSpace = null;
+
+async function enterVR() {
+  if (!navigator.xr) { document.getElementById('no-xr').style.display='block'; return; }
+  const supported = await navigator.xr.isSessionSupported('immersive-vr');
+  if (!supported) { document.getElementById('no-xr').style.display='block'; return; }
+
+  xrSession = await navigator.xr.requestSession('immersive-vr', {
+    requiredFeatures: ['local-floor'],
+    optionalFeatures: ['hand-tracking'],
+  });
+
+  renderer.xr.setReferenceSpaceType('local-floor');
+  await renderer.xr.setSession(xrSession);
+  xrRefSpace = await xrSession.requestReferenceSpace('local-floor');
+
+  document.getElementById('overlay').style.display = 'none';
+  renderer.setAnimationLoop(xrRenderLoop);
+
+  xrSession.addEventListener('end', () => {
+    document.getElementById('overlay').style.display = 'flex';
+    renderer.setAnimationLoop(null);
+  });
+}
+
+// ─── JOINT POSITION HELPER ──────────────────────────────────────────────────
+function getJointPos(hand, jointIdx, frame, refSpace) {
+  if (!hand) return null;
+  const joint = hand.get(hand.values().next().value);
+  // iterate joints
+  let i = 0;
+  for (const [jRef] of hand.entries ? hand.entries() : []) {
+    if (i === jointIdx) {
+      const pose = frame.getJointPose(jRef, refSpace);
+      if (pose) return new THREE.Vector3().setFromMatrixPosition(new THREE.Matrix4().fromArray(pose.transform.matrix));
+    }
+    i++;
+  }
+  return null;
+}
+
+// Proper joint pose extraction
+function getJointPosFromArray(jointArr, jointIdx, frame, refSpace) {
+  if (!jointArr || jointIdx >= jointArr.length) return null;
+  const jRef = jointArr[jointIdx];
+  if (!jRef) return null;
+  const pose = frame.getJointPose(jRef, refSpace);
+  if (!pose) return null;
+  const m = pose.transform.matrix;
+  return new THREE.Vector3(m[12], m[13], m[14]);
+}
+
+// ─── XR RENDER LOOP ─────────────────────────────────────────────────────────
+function xrRenderLoop(timestamp, frame) {
+  if (!frame) { renderer.render(scene, camera); return; }
+
+  const session = renderer.xr.getSession();
+  const refSpace = renderer.xr.getReferenceSpace();
+
+  // Process hand inputs
+  for (const inputSource of session.inputSources) {
+    if (!inputSource.hand) continue;
+    const side = inputSource.handedness; // 'left' or 'right'
+    if (side !== 'left' && side !== 'right') continue;
+
+    const hand = inputSource.hand;
+    const joints = [...hand.values()];
+    const vis = side === 'left' ? leftHandVis : rightHandVis;
+
+    // Update visual joint positions
+    for (let i = 0; i < Math.min(joints.length, 25); i++) {
+      const pose = frame.getJointPose(joints[i], refSpace);
+      if (pose) {
+        const m = pose.transform.matrix;
+        vis.joints[i].position.set(m[12], m[13], m[14]);
+        vis.joints[i].visible = true;
+      } else {
+        vis.joints[i].visible = false;
+      }
+    }
+
+    // Get key joint positions
+    function jp(idx) {
+      if (idx >= joints.length) return null;
+      const pose = frame.getJointPose(joints[idx], refSpace);
+      if (!pose) return null;
+      const m = pose.transform.matrix;
+      return new THREE.Vector3(m[12], m[13], m[14]);
+    }
+
+    const thumbTip  = jp(THUMB_TIP);
+    const indexTip  = jp(INDEX_TIP);
+    const middleTip = jp(MIDDLE_TIP);
+    const ringTip   = jp(RING_TIP);
+    const pinkyTip  = jp(PINKY_TIP);
+    const wrist     = jp(WRIST);
+    const indexMCP  = jp(INDEX_MCP);
+
+    if (!thumbTip || !indexTip) continue;
+
+    // Pinch: thumb tip close to index tip
+    const pinchDist = thumbTip.distanceTo(indexTip);
+    const isPinching = pinchDist < 0.025;
+
+    // Fist: all fingertips close to wrist / MCP
+    let isFist = false;
+    if (wrist && middleTip && ringTip && pinkyTip) {
+      const avgFinger = new THREE.Vector3()
+        .add(middleTip).add(ringTip).add(pinkyTip).multiplyScalar(1/3);
+      isFist = indexTip.distanceTo(wrist) < 0.06 && avgFinger.distanceTo(wrist) < 0.07;
+    }
+
+    // Pinch midpoint (cursor position)
+    const pinchMid = thumbTip.clone().add(indexTip).multiplyScalar(0.5);
+
+    const st = handState[side];
+    st.pinchJustDown = isPinching && !prevHandState[side].pinch;
+    st.pinchJustUp   = !isPinching && prevHandState[side].pinch;
+    st.fistJustDown  = isFist && !prevHandState[side].fist;
+    st.pinch = isPinching;
+    st.fist  = isFist;
+    st.pos.copy(pinchMid);
+
+    // Update cursor
+    if (side === 'left')  { cursorL.position.copy(pinchMid); cursorL.visible = true; }
+    if (side === 'right') { cursorR.position.copy(pinchMid); cursorR.visible = true; }
+
+    // HUD follows left wrist
+    if (side === 'left' && wrist) {
+      hudMesh.position.copy(wrist);
+      hudMesh.position.y += 0.06;
+      // Face toward camera
+      const camPos = camera.position.clone();
+      if (renderer.xr.isPresenting) {
+        const xrCam = renderer.xr.getCamera(camera);
+        camPos.setFromMatrixPosition(xrCam.matrixWorld);
+      }
+      hudMesh.lookAt(camPos);
+    }
+  }
+
+  // ── GESTURE PROCESSING ──────────────────────────────────────────────────
+  const now = performance.now();
+  const rSt = handState.right;
+  const lSt = handState.left;
+
+  // Right fist → cycle edit mode
+  if (rSt.fistJustDown && now - lastModeChange > 800) {
+    modeIdx = (modeIdx + 1) % MODES.length;
+    editMode = MODES[modeIdx];
+    selectedVerts.clear(); selectedFaces.clear();
+    rebuildGizmos();
+    updateHUD();
+    lastModeChange = now;
+  }
+
+  // Left fist → add cube
+  if (lSt.fistJustDown && now - lastAddCube > 1200) {
+    const spawnPos = lSt.pos.clone();
+    spawnPos.y = Math.max(0.05, spawnPos.y);
+    const o = createMeshObject(buildCubeData(), spawnPos);
+    selectedObject = o;
+    for (const m of meshObjects) m.mesh.material.color.setHex(0x1e3a7a);
+    o.mesh.material.color.setHex(0x2255cc);
+    rebuildGizmos();
+    lastAddCube = now;
+  }
+
+  // Both pinching → two-hand gesture (extrude when spread)
+  if (rSt.pinch && lSt.pinch) {
+    const dist = rSt.pos.distanceTo(lSt.pos);
+    if (bothPinchedAt === 0) { bothPinchedAt = now; bothPinchDistance = dist; }
+    else if (dist - bothPinchDistance > 0.08 && now - lastExtrude > 600 && editMode === 'face' && selectedFaces.size > 0) {
+      extrudeSelected();
+      lastExtrude = now;
+      bothPinchedAt = 0;
+    }
+  } else {
+    bothPinchedAt = 0;
+  }
+
+  // Right pinch → select (single hand)
+  if (rSt.pinchJustDown && !lSt.pinch) {
+    detectHover(rSt.pos);
+    if (editMode === 'vertex' && hoveredVert >= 0) {
+      selectedVerts.add(hoveredVert);
+      updateGizmoColors();
+      // Start drag
+      dragging = {
+        type: 'vertex', hand: 'right',
+        startTip: rSt.pos.clone(),
+        origPositions: {},
+      };
+      for (const vi of selectedVerts) {
+        dragging.origPositions[vi] = selectedObject.meshObj.verts[vi].clone();
+      }
+    } else if (editMode === 'face' && hoveredFace >= 0) {
+      selectedFaces.add(hoveredFace);
+      updateGizmoColors();
+      // Start drag for face
+      const affectedVerts = new Set();
+      for (const fi of selectedFaces) {
+        const q = selectedObject.meshObj.quads[fi];
+        [q.a,q.b,q.c,q.d].forEach(i => affectedVerts.add(i));
+      }
+      dragging = { type:'face', hand:'right', startTip: rSt.pos.clone(), origPositions:{} };
+      for (const vi of affectedVerts) dragging.origPositions[vi] = selectedObject.meshObj.verts[vi].clone();
+    } else if (editMode === 'object') {
+      detectHover(rSt.pos);
+      if (hoveredObj) {
+        selectedObject = hoveredObj;
+        for (const o of meshObjects) o.mesh.material.color.setHex(0x1e3a7a);
+        hoveredObj.mesh.material.color.setHex(0x2255cc);
+        dragging = { type:'object', hand:'right', startTip: rSt.pos.clone(), origPos: selectedObject.mesh.position.clone() };
+        rebuildGizmos();
+      }
+    }
+    updateHUD();
+  }
+
+  // Drag update
+  if (dragging && rSt.pinch && selectedObject) {
+    const delta = rSt.pos.clone().sub(dragging.startTip);
+    if (dragging.type === 'object') {
+      selectedObject.mesh.position.copy(dragging.origPos).add(delta);
+    } else if (dragging.type === 'vertex' || dragging.type === 'face') {
+      for (const [vi, orig] of Object.entries(dragging.origPositions)) {
+        selectedObject.meshObj.verts[parseInt(vi)].copy(orig).add(delta);
+      }
+      selectedObject.rebuild();
+      syncGizmoPositions();
+      updateGizmoColors();
+    }
+  }
+
+  // Release drag
+  if (dragging && rSt.pinchJustUp) {
+    dragging = null;
+  }
+
+  // Update hover highlights even without pinch
+  if (!dragging && rSt.pinch === false) {
+    detectHover(rSt.pos);
+    // Dim all, highlight hovered
+    if (editMode === 'vertex') {
+      for (const d of vertDots) {
+        const sel = selectedVerts.has(d.userData.vertIdx);
+        const hov = d.userData.vertIdx === hoveredVert;
+        d.material.color.setHex(hov ? 0xffffff : sel ? 0xff8833 : 0x4466cc);
+        d.scale.setScalar(hov ? 1.5 : 1.0);
+      }
+    } else if (editMode === 'face') {
+      for (const fg of faceHighlights) {
+        const sel = selectedFaces.has(fg.userData.faceIdx);
+        const hov = fg.userData.faceIdx === hoveredFace;
+        fg.material.color.setHex(hov ? 0xffffff : sel ? 0xff7700 : 0x3366ff);
+        fg.material.opacity = hov ? 0.4 : sel ? 0.5 : 0.15;
+      }
+    }
+  }
+
+  // Save prev state
+  prevHandState.left  = { pinch: lSt.pinch, fist: lSt.fist };
+  prevHandState.right = { pinch: rSt.pinch, fist: rSt.fist };
+
+  renderer.render(scene, camera);
+}
+
+// ─── FALLBACK (NON-VR) RENDER LOOP ──────────────────────────────────────────
+// Orbit controls for desktop preview
+let isOrbiting = false, lastM = {x:0,y:0};
+let orbitState = { theta: 0.7, phi: 1.1, r: 2.5 };
+const orbitTarget = new THREE.Vector3(0, 1.2, -0.5);
+
+function updateOrbitCamera() {
+  const {theta,phi,r} = orbitState;
+  camera.position.set(
+    orbitTarget.x + r*Math.sin(phi)*Math.sin(theta),
+    orbitTarget.y + r*Math.cos(phi),
+    orbitTarget.z + r*Math.sin(phi)*Math.cos(theta)
+  );
+  camera.lookAt(orbitTarget);
+}
+updateOrbitCamera();
+
+document.addEventListener('mousedown', e => { if(e.button===2){isOrbiting=true;lastM={x:e.clientX,y:e.clientY};} });
+document.addEventListener('mousemove', e => {
+  if (!isOrbiting) return;
+  orbitState.theta -= (e.clientX-lastM.x)*0.01;
+  orbitState.phi = Math.max(0.1, Math.min(Math.PI-0.1, orbitState.phi-(e.clientY-lastM.y)*0.01));
+  lastM={x:e.clientX,y:e.clientY};
+  updateOrbitCamera();
+});
+document.addEventListener('mouseup', () => isOrbiting=false);
+document.addEventListener('wheel', e => {
+  orbitState.r = Math.max(0.5, Math.min(10, orbitState.r+e.deltaY*0.005));
+  updateOrbitCamera();
+  e.preventDefault();
+}, {passive:false});
+document.addEventListener('contextmenu', e => e.preventDefault());
+
+function desktopLoop() {
+  requestAnimationFrame(desktopLoop);
+  if (!renderer.xr.isPresenting) {
+    updateHUD();
+    hudMesh.position.set(-0.6, 1.5, -0.4);
+    hudMesh.lookAt(camera.position);
+    renderer.render(scene, camera);
+  }
+}
+
+window.addEventListener('resize', () => {
+  renderer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+});
+
+// ─── INIT ───────────────────────────────────────────────────────────────────
+rebuildGizmos();
+updateHUD();
+desktopLoop();
+
+// Check WebXR support
+(async () => {
+  const btn = document.getElementById('enter-btn');
+  if (!navigator.xr) {
+    btn.disabled = true;
+    document.getElementById('no-xr').style.display = 'block';
+    return;
+  }
+  const ok = await navigator.xr.isSessionSupported('immersive-vr').catch(()=>false);
+  if (!ok) {
+    btn.disabled = true;
+    document.getElementById('no-xr').style.display = 'block';
+  }
+})();
+
+document.getElementById('enter-btn').addEventListener('click', enterVR);
+</script>
+</body>
+</html>
