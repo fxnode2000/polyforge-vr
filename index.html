@@ -12,8 +12,8 @@
     color:#8af; z-index:10;
   }
   #overlay h1 { font-size:2rem; letter-spacing:0.2em; margin-bottom:0.5rem; }
-  #overlay p  { color:#556; font-size:0.85rem; margin-bottom:2rem; letter-spacing:0.05em; }
-  #overlay .hint { font-size:0.75rem; color:#446; margin-top:1.5rem; max-width:400px; text-align:center; line-height:1.8; }
+  #overlay p  { color:#556; font-size:0.85rem; margin-bottom:2rem; }
+  #overlay .hint { font-size:0.75rem; color:#446; margin-top:1.5rem; max-width:420px; text-align:center; line-height:1.9; }
   #enter-btn {
     padding:14px 40px; font-size:1rem; letter-spacing:0.15em; font-family:monospace;
     background:transparent; color:#8af; border:1px solid #336; border-radius:4px; cursor:pointer;
@@ -26,62 +26,60 @@
 <body>
 <div id="overlay">
   <h1>POLYFORGE VR</h1>
-  <p>Hand-tracked polygonal modeller · Meta Quest 3</p>
+  <p>Button-palette polygonal modeller · Meta Quest 3</p>
   <button id="enter-btn">ENTER VR</button>
   <div id="no-xr">WebXR not supported — open in Quest Browser</div>
   <div class="hint">
-    <strong style="color:#8af">Gestures</strong><br>
-    👌 Pinch right hand → select / drag<br>
-    ✊ Fist right hand → cycle mode (Object › Vertex › Face)<br>
-    ✊ Fist left hand → spawn new cube<br>
-    👌👌 Both pinch + pull apart → extrude face<br><br>
-    <span style="color:#334">A debug HUD floats above your left wrist showing<br>live pinch distance and detected gestures</span>
+    <strong style="color:#8af">How to use</strong><br>
+    A button palette floats above your <strong style="color:#8af">left hand</strong><br>
+    Point your right index finger at a button and hold it inside to activate<br><br>
+    <strong style="color:#7af">Modes:</strong> Object · Vertex · Face<br>
+    <strong style="color:#7af">Actions:</strong> Select · Move · Extrude · Delete · Add Cube<br><br>
+    <span style="color:#334">Right index finger tip = your cursor<br>
+    Orange sphere shows where you're pointing</span>
   </div>
 </div>
 <canvas id="c"></canvas>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
-// ── WebXR hand joint indices (W3C spec order) ────────────────────────────
-// 0=wrist
-// 1=thumb-metacarpal 2=thumb-phalanx-proximal 3=thumb-phalanx-distal 4=thumb-tip
-// 5=index-metacarpal 6=index-proximal 7=index-intermediate 8=index-distal 9=index-tip
-// 10=middle-metacarpal ... 14=middle-tip
-// 15=ring-metacarpal  ... 19=ring-tip
-// 20=pinky-metacarpal ... 24=pinky-tip
-const J = { WRIST:0, THUMB_TIP:4, INDEX_TIP:9, MIDDLE_TIP:14, RING_TIP:19, PINKY_TIP:24 };
+// ── Joint indices (W3C WebXR Hand spec) ───────────────────────────────────
+const J = {
+  WRIST:0,
+  THUMB_TIP:4, INDEX_TIP:9, MIDDLE_TIP:14, RING_TIP:19, PINKY_TIP:24,
+  INDEX_PROX:6, // index proximal — used for palm normal
+  MIDDLE_PROX:11,
+};
 
 // ── Renderer ──────────────────────────────────────────────────────────────
 const canvas = document.getElementById('c');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias:true });
 renderer.setPixelRatio(Math.min(devicePixelRatio,2));
-renderer.setSize(innerWidth, innerHeight);
+renderer.setSize(innerWidth,innerHeight);
 renderer.xr.enabled = true;
 renderer.shadowMap.enabled = true;
-
-window.addEventListener('resize', () => {
-  renderer.setSize(innerWidth, innerHeight);
-  camera.aspect = innerWidth/innerHeight;
+window.addEventListener('resize',()=>{
+  renderer.setSize(innerWidth,innerHeight);
+  camera.aspect=innerWidth/innerHeight;
   camera.updateProjectionMatrix();
 });
 
 // ── Scene ─────────────────────────────────────────────────────────────────
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x07070f);
-const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 100);
-camera.position.set(0, 1.6, 2);
-
-scene.add(new THREE.AmbientLight(0x334466, 2));
-const sun = new THREE.DirectionalLight(0xaaccff, 1.5);
-sun.position.set(4, 8, 4); sun.castShadow = true; scene.add(sun);
-scene.add(new THREE.GridHelper(8, 32, 0x111122, 0x0a0a18));
+const camera = new THREE.PerspectiveCamera(70,innerWidth/innerHeight,0.01,100);
+camera.position.set(0,1.6,2);
+scene.add(new THREE.AmbientLight(0x334466,2.2));
+const sun=new THREE.DirectionalLight(0xaaccff,1.5);
+sun.position.set(4,8,4); sun.castShadow=true; scene.add(sun);
+scene.add(new THREE.GridHelper(8,32,0x111122,0x0a0a18));
 
 // ── Geometry helpers ──────────────────────────────────────────────────────
-function quadsToGeo(verts, quads) {
-  const pos=[], nor=[];
-  for (const q of quads) {
+function quadsToGeo(verts,quads){
+  const pos=[],nor=[];
+  for(const q of quads){
     const va=verts[q.a],vb=verts[q.b],vc=verts[q.c],vd=verts[q.d];
-    const n = new THREE.Vector3().crossVectors(
+    const n=new THREE.Vector3().crossVectors(
       new THREE.Vector3().subVectors(vb,va),
       new THREE.Vector3().subVectors(vc,va)
     ).normalize();
@@ -89,114 +87,114 @@ function quadsToGeo(verts, quads) {
              va.x,va.y,va.z,vc.x,vc.y,vc.z,vd.x,vd.y,vd.z);
     for(let i=0;i<6;i++) nor.push(n.x,n.y,n.z);
   }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos,3));
-  g.setAttribute('normal',   new THREE.Float32BufferAttribute(nor,3));
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
+  g.setAttribute('normal',  new THREE.Float32BufferAttribute(nor,3));
   return g;
 }
 
-function cubeData(s=0.13) {
-  const v = [
-    new THREE.Vector3(-s,-s,-s), new THREE.Vector3(s,-s,-s),
-    new THREE.Vector3(s, s,-s),  new THREE.Vector3(-s, s,-s),
-    new THREE.Vector3(-s,-s, s), new THREE.Vector3(s,-s, s),
-    new THREE.Vector3(s, s, s),  new THREE.Vector3(-s, s, s),
-  ];
-  return { verts:v, quads:[
-    {a:0,b:1,c:2,d:3},{a:5,b:4,c:7,d:6},
-    {a:4,b:0,c:3,d:7},{a:1,b:5,c:6,d:2},
-    {a:3,b:2,c:6,d:7},{a:4,b:5,c:1,d:0},
-  ]};
+function cubeData(s=0.13){
+  return {
+    verts:[
+      new THREE.Vector3(-s,-s,-s),new THREE.Vector3(s,-s,-s),
+      new THREE.Vector3(s,s,-s),  new THREE.Vector3(-s,s,-s),
+      new THREE.Vector3(-s,-s,s), new THREE.Vector3(s,-s,s),
+      new THREE.Vector3(s,s,s),   new THREE.Vector3(-s,s,s),
+    ],
+    quads:[
+      {a:0,b:1,c:2,d:3},{a:5,b:4,c:7,d:6},
+      {a:4,b:0,c:3,d:7},{a:1,b:5,c:6,d:2},
+      {a:3,b:2,c:6,d:7},{a:4,b:5,c:1,d:0},
+    ]
+  };
 }
 
 // ── Mesh objects ──────────────────────────────────────────────────────────
-let meshObjects = [], selectedObject = null;
+let meshObjects=[],selectedObject=null;
 
-function createObject(data, pos) {
-  const mo = { verts:data.verts.map(v=>v.clone()), quads:[...data.quads] };
-  const geo = quadsToGeo(mo.verts, mo.quads);
-  const mat = new THREE.MeshLambertMaterial({ color:0x1e3a8a, side:THREE.DoubleSide });
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.castShadow = true;
-  mesh.position.copy(pos || new THREE.Vector3(0, 1.15, -0.5));
+function createObject(data,pos){
+  const mo={verts:data.verts.map(v=>v.clone()),quads:[...data.quads]};
+  const geo=quadsToGeo(mo.verts,mo.quads);
+  const mat=new THREE.MeshLambertMaterial({color:0x1e3a8a,side:THREE.DoubleSide});
+  const mesh=new THREE.Mesh(geo,mat);
+  mesh.castShadow=true;
+  mesh.position.copy(pos||new THREE.Vector3(0,1.15,-0.5));
   scene.add(mesh);
-  const wire = new THREE.LineSegments(
+  const wire=new THREE.LineSegments(
     new THREE.EdgesGeometry(geo),
-    new THREE.LineBasicMaterial({ color:0x4466aa })
+    new THREE.LineBasicMaterial({color:0x4466aa})
   );
   mesh.add(wire);
-  const obj = { mesh, wire, mo };
-  obj.rebuild = () => {
-    const g2 = quadsToGeo(mo.verts, mo.quads);
-    mesh.geometry.setAttribute('position', g2.getAttribute('position'));
-    mesh.geometry.setAttribute('normal',   g2.getAttribute('normal'));
+  const obj={mesh,wire,mo};
+  obj.rebuild=()=>{
+    const g2=quadsToGeo(mo.verts,mo.quads);
+    mesh.geometry.setAttribute('position',g2.getAttribute('position'));
+    mesh.geometry.setAttribute('normal',  g2.getAttribute('normal'));
     mesh.geometry.computeBoundingSphere();
     wire.geometry.dispose();
-    wire.geometry = new THREE.EdgesGeometry(mesh.geometry);
+    wire.geometry=new THREE.EdgesGeometry(mesh.geometry);
   };
   meshObjects.push(obj);
   return obj;
 }
 
-const firstObj = createObject(cubeData());
-selectedObject = firstObj;
+const firstObj=createObject(cubeData());
+selectedObject=firstObj;
 firstObj.mesh.material.color.setHex(0x2255dd);
 
 // ── Edit state ────────────────────────────────────────────────────────────
-const MODES = ['object','vertex','face'];
-let modeIdx = 0, editMode = 'object';
-let selVerts = new Set(), selFaces = new Set();
+const MODES=['object','vertex','face'];
+let modeIdx=0, editMode='object';
+let activeTool='select'; // select | move
+let selVerts=new Set(), selFaces=new Set();
 
 // ── Gizmos ────────────────────────────────────────────────────────────────
-const gizmos = new THREE.Group(); scene.add(gizmos);
-let vDots = [], fGizmos = [];
-const vDotGeo = new THREE.SphereGeometry(0.012,8,8);
+const gizmos=new THREE.Group(); scene.add(gizmos);
+let vDots=[], fGizmos=[];
+const vDotGeo=new THREE.SphereGeometry(0.013,8,8);
 
-function clearGizmos() {
+function clearGizmos(){
   while(gizmos.children.length) gizmos.remove(gizmos.children[0]);
   vDots=[]; fGizmos=[];
 }
 
-function buildGizmos() {
+function buildGizmos(){
   clearGizmos();
-  if (!selectedObject) return;
-  const {mo, mesh} = selectedObject;
-  if (editMode==='vertex') {
-    for (let i=0;i<mo.verts.length;i++) {
-      const d = new THREE.Mesh(vDotGeo, new THREE.MeshBasicMaterial({color:0x4488ff}));
+  if(!selectedObject) return;
+  const {mo,mesh}=selectedObject;
+  if(editMode==='vertex'){
+    for(let i=0;i<mo.verts.length;i++){
+      const d=new THREE.Mesh(vDotGeo,new THREE.MeshBasicMaterial({color:0x4488ff}));
       d.position.copy(mo.verts[i]).add(mesh.position);
-      d.userData.vi = i;
-      gizmos.add(d); vDots.push(d);
+      d.userData.vi=i; gizmos.add(d); vDots.push(d);
     }
-  } else if (editMode==='face') {
-    for (let fi=0;fi<mo.quads.length;fi++) {
+  } else if(editMode==='face'){
+    for(let fi=0;fi<mo.quads.length;fi++){
       const q=mo.quads[fi];
       const va=mo.verts[q.a],vb=mo.verts[q.b],vc=mo.verts[q.c],vd=mo.verts[q.d];
-      const pg = new THREE.BufferGeometry();
-      pg.setAttribute('position', new THREE.Float32BufferAttribute([
+      const pg=new THREE.BufferGeometry();
+      pg.setAttribute('position',new THREE.Float32BufferAttribute([
         va.x,va.y,va.z,vb.x,vb.y,vb.z,vc.x,vc.y,vc.z,
         va.x,va.y,va.z,vc.x,vc.y,vc.z,vd.x,vd.y,vd.z,
       ],3));
-      const fm = new THREE.Mesh(pg, new THREE.MeshBasicMaterial({
-        color:0x3366ff, transparent:true, opacity:0.2, side:THREE.DoubleSide, depthTest:false
+      const fm=new THREE.Mesh(pg,new THREE.MeshBasicMaterial({
+        color:0x3366ff,transparent:true,opacity:0.2,side:THREE.DoubleSide,depthTest:false
       }));
-      fm.position.copy(mesh.position);
-      fm.userData.fi = fi;
+      fm.position.copy(mesh.position); fm.userData.fi=fi;
       gizmos.add(fm); fGizmos.push(fm);
     }
   }
 }
 
-function syncGizmos() {
-  if (!selectedObject) return;
-  const {mo, mesh} = selectedObject;
-  for (const d of vDots) d.position.copy(mo.verts[d.userData.vi]).add(mesh.position);
-  for (const fg of fGizmos) {
-    const fi=fg.userData.fi;
-    if(fi>=mo.quads.length) continue;
+function syncGizmos(){
+  if(!selectedObject) return;
+  const {mo,mesh}=selectedObject;
+  for(const d of vDots) d.position.copy(mo.verts[d.userData.vi]).add(mesh.position);
+  for(const fg of fGizmos){
+    const fi=fg.userData.fi; if(fi>=mo.quads.length) continue;
     const q=mo.quads[fi];
     const va=mo.verts[q.a],vb=mo.verts[q.b],vc=mo.verts[q.c],vd=mo.verts[q.d];
-    fg.geometry.setAttribute('position', new THREE.Float32BufferAttribute([
+    fg.geometry.setAttribute('position',new THREE.Float32BufferAttribute([
       va.x,va.y,va.z,vb.x,vb.y,vb.z,vc.x,vc.y,vc.z,
       va.x,va.y,va.z,vc.x,vc.y,vc.z,vd.x,vd.y,vd.z,
     ],3));
@@ -204,24 +202,24 @@ function syncGizmos() {
   }
 }
 
-function colorGizmos(hovV=-1, hovF=-1) {
-  for (const d of vDots) {
-    const sel=selVerts.has(d.userData.vi), hov=d.userData.vi===hovV;
+function colorGizmos(hovV=-1,hovF=-1){
+  for(const d of vDots){
+    const sel=selVerts.has(d.userData.vi),hov=d.userData.vi===hovV;
     d.material.color.setHex(hov?0xffffff:sel?0xff8833:0x4488ff);
-    d.scale.setScalar(hov||sel?1.5:1.0);
+    d.scale.setScalar(hov||sel?1.5:1);
   }
-  for (const fg of fGizmos) {
-    const sel=selFaces.has(fg.userData.fi), hov=fg.userData.fi===hovF;
+  for(const fg of fGizmos){
+    const sel=selFaces.has(fg.userData.fi),hov=fg.userData.fi===hovF;
     fg.material.color.setHex(hov?0xffffff:sel?0xff7700:0x3366ff);
     fg.material.opacity=hov?0.45:sel?0.55:0.2;
   }
 }
 
 // ── Operations ────────────────────────────────────────────────────────────
-function extrude() {
-  if (!selectedObject||selFaces.size===0) return;
+function doExtrude(){
+  if(!selectedObject||selFaces.size===0) return;
   const mo=selectedObject.mo;
-  for (const fi of selFaces) {
+  for(const fi of selFaces){
     const q=mo.quads[fi];
     const va=mo.verts[q.a],vb=mo.verts[q.b],vc=mo.verts[q.c],vd=mo.verts[q.d];
     const n=new THREE.Vector3().crossVectors(
@@ -237,108 +235,206 @@ function extrude() {
     );
   }
   selFaces.clear();
-  selectedObject.rebuild(); buildGizmos();
+  selectedObject.rebuild(); buildGizmos(); updatePalette();
 }
 
-function cycleMode() {
-  modeIdx=(modeIdx+1)%MODES.length;
-  editMode=MODES[modeIdx];
-  selVerts.clear(); selFaces.clear();
-  buildGizmos();
+function doDelete(){
+  if(!selectedObject) return;
+  if(editMode==='face'&&selFaces.size>0){
+    selectedObject.mo.quads=selectedObject.mo.quads.filter((_,i)=>!selFaces.has(i));
+    selFaces.clear(); selectedObject.rebuild(); buildGizmos();
+  } else if(editMode==='vertex'&&selVerts.size>0){
+    selectedObject.mo.quads=selectedObject.mo.quads.filter(
+      q=>![q.a,q.b,q.c,q.d].some(i=>selVerts.has(i))
+    );
+    selVerts.clear(); selectedObject.rebuild(); buildGizmos();
+  }
+  updatePalette();
 }
+
+function doAddCube(){
+  // Spawn in front of user
+  const xrCam=renderer.xr.getCamera(camera);
+  const fwd=new THREE.Vector3(0,0,-0.5).applyQuaternion(xrCam.quaternion);
+  const pos=new THREE.Vector3().setFromMatrixPosition(xrCam.matrixWorld).add(fwd);
+  pos.y=Math.max(0.1,pos.y);
+  const o=createObject(cubeData(),pos);
+  for(const m of meshObjects) m.mesh.material.color.setHex(0x1e3a8a);
+  selectedObject=o; o.mesh.material.color.setHex(0x2255dd);
+  editMode='object'; modeIdx=0; selVerts.clear(); selFaces.clear();
+  buildGizmos(); updatePalette();
+}
+
+function setMode(m){
+  editMode=m; modeIdx=MODES.indexOf(m);
+  selVerts.clear(); selFaces.clear();
+  buildGizmos(); updatePalette();
+}
+
+function setTool(t){ activeTool=t; updatePalette(); }
 
 // ── Hand joint visuals ────────────────────────────────────────────────────
-const jGeo = new THREE.SphereGeometry(0.007,6,6);
-function makeHandVis() {
-  const g=new THREE.Group(), joints=[];
+const jGeo=new THREE.SphereGeometry(0.006,6,6);
+function makeHandVis(){
+  const g=new THREE.Group(),joints=[];
   for(let i=0;i<25;i++){
-    const m=new THREE.Mesh(jGeo, new THREE.MeshBasicMaterial({color:0x5577bb}));
+    const m=new THREE.Mesh(jGeo,new THREE.MeshBasicMaterial({color:0x445588}));
     g.add(m); joints.push(m);
   }
   scene.add(g); return {g,joints};
 }
 const LH=makeHandVis(), RH=makeHandVis();
 
-// Pinch cursors
-const pcGeo=new THREE.SphereGeometry(0.016,10,10);
-const pcL=new THREE.Mesh(pcGeo,new THREE.MeshBasicMaterial({color:0x4488ff,transparent:true,opacity:0.75}));
-const pcR=new THREE.Mesh(pcGeo,new THREE.MeshBasicMaterial({color:0xff8833,transparent:true,opacity:0.75}));
-scene.add(pcL); scene.add(pcR);
+// Right index cursor sphere
+const cursorGeo=new THREE.SphereGeometry(0.014,10,10);
+const cursor=new THREE.Mesh(cursorGeo,new THREE.MeshBasicMaterial({color:0xff8833,transparent:true,opacity:0.85}));
+scene.add(cursor);
 
-// ── HUD ───────────────────────────────────────────────────────────────────
-const hc=document.createElement('canvas'); hc.width=512; hc.height=256;
-const hx=hc.getContext('2d');
-const htex=new THREE.CanvasTexture(hc);
-const hud=new THREE.Mesh(
-  new THREE.PlaneGeometry(0.3,0.15),
-  new THREE.MeshBasicMaterial({map:htex,transparent:true,side:THREE.DoubleSide,depthTest:false})
-);
-scene.add(hud);
+// ── PALETTE ───────────────────────────────────────────────────────────────
+// Each button is a 3D flat box that floats above the left wrist
+// Buttons are defined with label, color, action
+const PALETTE_BUTTONS = [
+  // Row 0 — Modes
+  { label:'OBJ',   color:0x1a3a6a, activeColor:0x2266ff, row:0, col:0, action:()=>setMode('object') },
+  { label:'VERT',  color:0x1a3a6a, activeColor:0x2266ff, row:0, col:1, action:()=>setMode('vertex') },
+  { label:'FACE',  color:0x1a3a6a, activeColor:0x2266ff, row:0, col:2, action:()=>setMode('face') },
+  // Row 1 — Tools
+  { label:'SEL',   color:0x1a4a2a, activeColor:0x22aa44, row:1, col:0, action:()=>setTool('select') },
+  { label:'MOVE',  color:0x1a4a2a, activeColor:0x22aa44, row:1, col:1, action:()=>setTool('move') },
+  // Row 2 — Operations
+  { label:'EXTR',  color:0x4a2a1a, activeColor:0xdd6622, row:2, col:0, action:()=>doExtrude() },
+  { label:'DEL',   color:0x4a1a1a, activeColor:0xdd2222, row:2, col:1, action:()=>doDelete() },
+  { label:'+CUBE', color:0x2a1a4a, activeColor:0x8833dd, row:2, col:2, action:()=>doAddCube() },
+];
 
-let dbg={ lDist:'—', rDist:'—', lG:'open', rG:'open' };
+const BTN_W=0.065, BTN_H=0.030, BTN_D=0.008;
+const BTN_GAP=0.010;
+const ROW_GAP=0.012;
+const paletteGroup=new THREE.Group(); scene.add(paletteGroup);
 
-function rr(cx,x,y,w,h,r){
-  cx.beginPath(); cx.moveTo(x+r,y); cx.lineTo(x+w-r,y); cx.quadraticCurveTo(x+w,y,x+w,y+r);
-  cx.lineTo(x+w,y+h-r); cx.quadraticCurveTo(x+w,y+h,x+w-r,y+h); cx.lineTo(x+r,y+h);
-  cx.quadraticCurveTo(x,y+h,x,y+h-r); cx.lineTo(x,y+r); cx.quadraticCurveTo(x,y,x+r,y);
-  cx.closePath();
+// Canvas texture per button
+function makeButtonMesh(btn){
+  // 3D box
+  const geo=new THREE.BoxGeometry(BTN_W,BTN_H,BTN_D);
+  const mat=new THREE.MeshLambertMaterial({color:btn.color});
+  const mesh=new THREE.Mesh(geo,mat);
+
+  // Canvas label on top face
+  const tc=document.createElement('canvas'); tc.width=128; tc.height=64;
+  const tx=tc.getContext('2d');
+  btn._canvas=tc; btn._ctx=tx; btn._tex=new THREE.CanvasTexture(tc);
+
+  // Label plane on top of box
+  const lp=new THREE.Mesh(
+    new THREE.PlaneGeometry(BTN_W*0.9, BTN_H*0.9),
+    new THREE.MeshBasicMaterial({map:btn._tex,transparent:true,depthTest:false})
+  );
+  lp.position.z=BTN_D/2+0.001;
+  mesh.add(lp);
+
+  btn._mesh=mesh;
+  btn._hoverT=0; // hover progress 0-1
+  paletteGroup.add(mesh);
+  return mesh;
 }
 
-function drawHUD() {
-  hx.clearRect(0,0,512,256);
-  // bg
-  hx.fillStyle='rgba(4,8,24,0.93)'; rr(hx,3,3,506,250,14); hx.fill();
-  hx.strokeStyle='#1e3060'; hx.lineWidth=1.5; rr(hx,3,3,506,250,14); hx.stroke();
-  // title
-  hx.fillStyle='#7b9cff'; hx.font='bold 20px monospace'; hx.textAlign='center';
-  hx.fillText('POLYFORGE VR',256,30);
-  // mode + sel
-  hx.fillStyle='#4a6aaa'; hx.font='14px monospace';
-  hx.fillText('MODE: '+editMode.toUpperCase(),256,54);
-  const sc=editMode==='vertex'?selVerts.size:editMode==='face'?selFaces.size:(selectedObject?1:0);
-  hx.fillStyle=sc>0?'#ff8833':'#2a3a5a';
-  hx.fillText('SELECTED: '+sc,256,74);
-  // debug box
-  hx.fillStyle='rgba(10,20,50,0.8)'; rr(hx,14,88,484,72,8); hx.fill();
-  hx.strokeStyle='#1a2a50'; hx.lineWidth=1; rr(hx,14,88,484,72,8); hx.stroke();
-  hx.textAlign='left'; hx.font='12px monospace';
-  // left hand
-  hx.fillStyle=dbg.lG==='PINCH'?'#ff8833':dbg.lG==='FIST'?'#ff4444':'#334466';
-  hx.fillText('LEFT  dist:'+dbg.lDist+'  '+dbg.lG,24,110);
-  // right hand
-  hx.fillStyle=dbg.rG==='PINCH'?'#ff8833':dbg.rG==='FIST'?'#ff4444':'#334466';
-  hx.fillText('RIGHT dist:'+dbg.rDist+'  '+dbg.rG,24,134);
-  // live indicator pill
-  const gc=dbg.rG==='PINCH'?'#ff8833':dbg.rG==='FIST'?'#ff3333':'#1a2a40';
-  hx.fillStyle=gc; rr(hx,390,92,108,26,8); hx.fill();
-  hx.fillStyle='#fff'; hx.textAlign='center'; hx.font='bold 12px monospace';
-  hx.fillText(dbg.rG,444,109);
-  // gesture guide
-  hx.fillStyle='#223355'; hx.textAlign='center'; hx.font='11px monospace';
-  hx.fillText('R-PINCH: select/drag    R-FIST: cycle mode',256,180);
-  hx.fillText('L-FIST: add cube    BOTH-PINCH+PULL: extrude',256,198);
-  hx.fillText('FIST = close all fingers tight to your palm',256,218);
-  htex.needsUpdate=true;
+PALETTE_BUTTONS.forEach(btn=>makeButtonMesh(btn));
+
+function isButtonActive(btn){
+  if(btn.label==='OBJ')  return editMode==='object';
+  if(btn.label==='VERT') return editMode==='vertex';
+  if(btn.label==='FACE') return editMode==='face';
+  if(btn.label==='SEL')  return activeTool==='select';
+  if(btn.label==='MOVE') return activeTool==='move';
+  return false;
 }
-drawHUD();
 
-// ── Gesture / hand state ──────────────────────────────────────────────────
-const hs = {
-  left:  {pinch:false,fist:false,pos:new THREE.Vector3()},
-  right: {pinch:false,fist:false,pos:new THREE.Vector3()},
-};
-const prev = {left:{pinch:false,fist:false},right:{pinch:false,fist:false}};
-let drag=null, lastMode=0, lastAdd=0, lastExtrude=0;
-let bothStart=0, bothDist=0;
+function updatePalette(){
+  for(const btn of PALETTE_BUTTONS){
+    const active=isButtonActive(btn);
+    const hov=btn._hoverT>0.1;
+    btn._mesh.material.color.setHex(active?btn.activeColor:hov?0x2a3a5a:btn.color);
 
-// ── Hover ─────────────────────────────────────────────────────────────────
-function detectHover(tip) {
+    // Redraw label
+    const tc=btn._canvas, tx=btn._ctx;
+    tc.width=128; tc.height=64; // reset
+    tx.clearRect(0,0,128,64);
+    tx.fillStyle=active?'#ffffff':hov?'#aabbff':'#7799bb';
+    tx.font=`bold ${active?22:18}px monospace`;
+    tx.textAlign='center'; tx.textBaseline='middle';
+    tx.fillText(btn.label,64,32);
+    btn._tex.needsUpdate=true;
+  }
+}
+
+// Position buttons in a grid relative to palette origin
+function layoutPalette(){
+  const cols=[0,1,2];
+  for(const btn of PALETTE_BUTTONS){
+    const x=btn.col*(BTN_W+BTN_GAP) - ((2)*(BTN_W+BTN_GAP))/2 + BTN_W/2;
+    const y=-(btn.row*(BTN_H+ROW_GAP));
+    btn._mesh.position.set(x,y,0);
+  }
+}
+layoutPalette();
+updatePalette();
+
+// ── Position palette above left wrist ─────────────────────────────────────
+const _up=new THREE.Vector3(0,1,0);
+const _fwd=new THREE.Vector3();
+const _right=new THREE.Vector3();
+
+function positionPalette(wristPos, wristQuat, camPos){
+  // Place palette above wrist, tilted to face the user slightly
+  paletteGroup.position.copy(wristPos);
+  paletteGroup.position.y += 0.1;
+  // Face toward camera
+  paletteGroup.lookAt(camPos);
+  // Tilt so it's readable (face up-ish when you look at your palm)
+  paletteGroup.rotateX(-0.3);
+}
+
+// ── Cursor / hover detection ──────────────────────────────────────────────
+const HOVER_R = 0.03; // 3cm — fingertip must be this close to button centre
+let btnHoverTimers = {}; // label -> ms hovered
+const ACTIVATE_MS = 600; // hold for 600ms to activate
+let lastActivated = {};
+
+function updateButtonHover(fingerTip, dt){
+  for(const btn of PALETTE_BUTTONS){
+    const world=new THREE.Vector3();
+    btn._mesh.getWorldPosition(world);
+    const dist=fingerTip.distanceTo(world);
+    const inside=dist<HOVER_R;
+
+    if(inside){
+      btn._hoverT=Math.min(1,btn._hoverT+dt/ACTIVATE_MS);
+      if(btn._hoverT>=1){
+        const now=performance.now();
+        if(!lastActivated[btn.label]||now-lastActivated[btn.label]>800){
+          btn.action();
+          lastActivated[btn.label]=now;
+          btn._hoverT=0; // reset after fire
+        }
+      }
+    } else {
+      btn._hoverT=Math.max(0,btn._hoverT-dt/200);
+    }
+
+    // Visual fill progress on button face (shrinks/grows)
+    btn._mesh.scale.z=1+btn._hoverT*0.5;
+  }
+  updatePalette();
+}
+
+// ── Geometry selection with right finger ──────────────────────────────────
+function detectGeomHover(tip){
   let hv=-1,hf=-1,ho=null;
-  const R=0.055;
-  if (editMode==='vertex') {
-    for (const d of vDots) { if(d.position.distanceTo(tip)<R){hv=d.userData.vi;break;} }
-  } else if (editMode==='face') {
-    for (const fg of fGizmos) {
+  const R=0.05;
+  if(editMode==='vertex'){
+    for(const d of vDots){ if(d.position.distanceTo(tip)<R){hv=d.userData.vi;break;} }
+  } else if(editMode==='face'){
+    for(const fg of fGizmos){
       const p=fg.geometry.getAttribute('position');
       const c=new THREE.Vector3();
       for(let i=0;i<p.count;i++) c.x+=p.getX(i),c.y+=p.getY(i),c.z+=p.getZ(i);
@@ -346,7 +442,7 @@ function detectHover(tip) {
       if(c.distanceTo(tip)<R*2.5){hf=fg.userData.fi;break;}
     }
   } else {
-    for (const o of meshObjects) {
+    for(const o of meshObjects){
       o.mesh.geometry.computeBoundingSphere();
       const bs=o.mesh.geometry.boundingSphere.clone();
       bs.center.add(o.mesh.position); bs.radius+=0.05;
@@ -356,164 +452,192 @@ function detectHover(tip) {
   return {hv,hf,ho};
 }
 
-// ── XR render loop ────────────────────────────────────────────────────────
-function xrLoop(ts, frame) {
-  if (!frame) { renderer.render(scene,camera); return; }
+// ── Drag state ────────────────────────────────────────────────────────────
+let drag=null;
+// "dwell select" — hold finger near geometry for 400ms to select/deselect
+let geomDwellTimer=0, geomDwellTarget=null;
+const DWELL_MS=400;
+
+// ── Hand state ────────────────────────────────────────────────────────────
+const hs={
+  left: {pos:new THREE.Vector3(),wristPos:new THREE.Vector3(),wristQuat:new THREE.Quaternion()},
+  right:{pos:new THREE.Vector3()},
+};
+let prevRightPos=new THREE.Vector3();
+let lastFrameTime=performance.now();
+
+// ── Status HUD ────────────────────────────────────────────────────────────
+const shc=document.createElement('canvas'); shc.width=256; shc.height=80;
+const shx=shc.getContext('2d');
+const shtex=new THREE.CanvasTexture(shc);
+const statusHud=new THREE.Mesh(
+  new THREE.PlaneGeometry(0.18,0.056),
+  new THREE.MeshBasicMaterial({map:shtex,transparent:true,side:THREE.DoubleSide,depthTest:false})
+);
+scene.add(statusHud);
+
+function drawStatus(){
+  shx.clearRect(0,0,256,80);
+  shx.fillStyle='rgba(4,8,24,0.85)';
+  shx.beginPath(); shx.roundRect(2,2,252,76,10); shx.fill();
+  shx.fillStyle='#4a6aaa'; shx.font='11px monospace'; shx.textAlign='center';
+  shx.fillText('MODE: '+editMode.toUpperCase()+'   TOOL: '+activeTool.toUpperCase(),128,22);
+  const sc=editMode==='vertex'?selVerts.size:editMode==='face'?selFaces.size:(selectedObject?1:0);
+  shx.fillStyle=sc>0?'#ff8833':'#2a3a5a';
+  shx.fillText('SELECTED: '+sc,128,42);
+  shx.fillStyle='#223344'; shx.font='10px monospace';
+  shx.fillText('point finger at left-hand buttons',128,62);
+  shtex.needsUpdate=true;
+}
+drawStatus();
+
+// ── XR loop ───────────────────────────────────────────────────────────────
+function xrLoop(ts, frame){
+  if(!frame){renderer.render(scene,camera);return;}
+  const now=performance.now();
+  const dt=Math.min(now-lastFrameTime,100);
+  lastFrameTime=now;
+
   const session=renderer.xr.getSession();
   const ref=renderer.xr.getReferenceSpace();
+  const xrCam=renderer.xr.getCamera(camera);
+  const camPos=new THREE.Vector3().setFromMatrixPosition(xrCam.matrixWorld);
 
-  for (const src of session.inputSources) {
-    if (!src.hand) continue;
+  let rightIndexTip=null, leftWristPos=null, leftWristQuat=null;
+
+  for(const src of session.inputSources){
+    if(!src.hand) continue;
     const side=src.handedness;
-    if (side!=='left'&&side!=='right') continue;
-
+    if(side!=='left'&&side!=='right') continue;
     const joints=[...src.hand.values()];
     const vis=side==='left'?LH:RH;
 
-    // helper: get joint world position
-    function jp(idx) {
+    function jp(idx){
       if(idx>=joints.length) return null;
       const pose=frame.getJointPose(joints[idx],ref);
       if(!pose) return null;
       const m=pose.transform.matrix;
       return new THREE.Vector3(m[12],m[13],m[14]);
     }
+    function jq(idx){
+      if(idx>=joints.length) return null;
+      const pose=frame.getJointPose(joints[idx],ref);
+      if(!pose) return null;
+      const q=pose.transform.orientation;
+      return new THREE.Quaternion(q.x,q.y,q.z,q.w);
+    }
 
-    // Update visual joint dots
+    // Update visual dots
     for(let i=0;i<Math.min(joints.length,25);i++){
       const pose=frame.getJointPose(joints[i],ref);
-      if(pose){
-        const m=pose.transform.matrix;
-        vis.joints[i].position.set(m[12],m[13],m[14]);
-        vis.joints[i].visible=true;
-      } else { vis.joints[i].visible=false; }
+      if(pose){const m=pose.transform.matrix;vis.joints[i].position.set(m[12],m[13],m[14]);vis.joints[i].visible=true;}
+      else vis.joints[i].visible=false;
     }
 
-    const thumbTip=jp(J.THUMB_TIP), indexTip=jp(J.INDEX_TIP);
-    const midTip=jp(J.MIDDLE_TIP), ringTip=jp(J.RING_TIP), pinkyTip=jp(J.PINKY_TIP);
-    const wrist=jp(J.WRIST);
-
-    if (!thumbTip||!indexTip) continue;
-
-    // ── PINCH: thumb tip ↔ index tip, threshold 5cm
-    const pinchDist=thumbTip.distanceTo(indexTip);
-    const isPinching=pinchDist<0.05;
-
-    // ── FIST: average distance of all 4 fingertips to wrist < 9cm
-    let isFist=false;
-    if (wrist&&midTip&&ringTip&&pinkyTip) {
-      const avg=(
-        indexTip.distanceTo(wrist)+midTip.distanceTo(wrist)+
-        ringTip.distanceTo(wrist)+pinkyTip.distanceTo(wrist)
-      )/4;
-      isFist = avg<0.09;
+    if(side==='left'){
+      const wp=jp(J.WRIST), wq=jq(J.WRIST);
+      if(wp){leftWristPos=wp; hs.left.wristPos.copy(wp);}
+      if(wq) leftWristQuat=wq;
     }
 
-    // Cursor at pinch midpoint
-    const pinchMid=thumbTip.clone().add(indexTip).multiplyScalar(0.5);
-    (side==='left'?pcL:pcR).position.copy(pinchMid);
-
-    // Update debug info
-    const ds=(pinchDist*100).toFixed(1)+'cm';
-    const gs=isFist?'FIST':isPinching?'PINCH':'open';
-    if(side==='left'){dbg.lDist=ds;dbg.lG=gs;}
-    else{dbg.rDist=ds;dbg.rG=gs;}
-
-    // HUD: float above left wrist, face camera
-    if(side==='left'&&wrist){
-      hud.position.copy(wrist); hud.position.y+=0.09;
-      const xrCam=renderer.xr.getCamera(camera);
-      hud.lookAt(new THREE.Vector3().setFromMatrixPosition(xrCam.matrixWorld));
+    if(side==='right'){
+      const it=jp(J.INDEX_TIP);
+      if(it){rightIndexTip=it; hs.right.pos.copy(it);}
     }
-
-    const st=hs[side];
-    const justPinch  = isPinching && !prev[side].pinch;
-    const justUnpinch= !isPinching && prev[side].pinch;
-    const justFist   = isFist && !prev[side].fist;
-    st.pinch=isPinching; st.fist=isFist; st.pos.copy(pinchMid);
-
-    const now=performance.now();
-
-    // ── Right fist → cycle mode (debounce 700ms)
-    if(side==='right'&&justFist&&!isPinching&&now-lastMode>700){
-      cycleMode(); lastMode=now;
-    }
-
-    // ── Left fist → spawn cube (debounce 1000ms)
-    if(side==='left'&&justFist&&!isPinching&&now-lastAdd>1000){
-      const p=st.pos.clone(); p.y=Math.max(0.05,p.y);
-      const o=createObject(cubeData(),p);
-      selectedObject=o;
-      for(const m of meshObjects) m.mesh.material.color.setHex(0x1e3a8a);
-      o.mesh.material.color.setHex(0x2255dd);
-      buildGizmos(); lastAdd=now;
-    }
-
-    // ── Right pinch start → select + begin drag
-    if(side==='right'&&justPinch&&!hs.left.pinch){
-      const {hv,hf,ho}=detectHover(st.pos);
-      if(editMode==='vertex'&&hv>=0){
-        selVerts.add(hv); colorGizmos(hv,-1);
-        const orig={};
-        for(const vi of selVerts) orig[vi]=selectedObject.mo.verts[vi].clone();
-        drag={type:'vertex',start:st.pos.clone(),orig};
-      } else if(editMode==='face'&&hf>=0){
-        selFaces.add(hf); colorGizmos(-1,hf);
-        const aff=new Set();
-        for(const fi of selFaces){const q=selectedObject.mo.quads[fi];[q.a,q.b,q.c,q.d].forEach(i=>aff.add(i));}
-        const orig={};
-        for(const vi of aff) orig[vi]=selectedObject.mo.verts[vi].clone();
-        drag={type:'face',start:st.pos.clone(),orig};
-      } else if(editMode==='object'&&ho){
-        selectedObject=ho;
-        for(const m of meshObjects) m.mesh.material.color.setHex(0x1e3a8a);
-        ho.mesh.material.color.setHex(0x2255dd);
-        drag={type:'object',start:st.pos.clone(),origPos:ho.mesh.position.clone()};
-        buildGizmos();
-      }
-    }
-
-    // ── Right pinch held → update drag
-    if(side==='right'&&st.pinch&&drag&&selectedObject){
-      const delta=st.pos.clone().sub(drag.start);
-      if(drag.type==='object'){
-        selectedObject.mesh.position.copy(drag.origPos).add(delta);
-        syncGizmos();
-      } else {
-        for(const [vi,orig] of Object.entries(drag.orig)){
-          selectedObject.mo.verts[parseInt(vi)].copy(orig).add(delta);
-        }
-        selectedObject.rebuild(); syncGizmos(); colorGizmos();
-      }
-    }
-
-    // ── Right pinch release → end drag
-    if(side==='right'&&justUnpinch) drag=null;
-
-    // Hover highlight when not dragging
-    if(side==='right'&&!st.pinch&&!drag){
-      const {hv,hf}=detectHover(st.pos);
-      colorGizmos(hv,hf);
-    }
-
-    prev[side]={pinch:isPinching,fist:isFist};
   }
 
-  // ── Both pinch + pull apart → extrude face
-  if(hs.left.pinch&&hs.right.pinch&&editMode==='face'&&selFaces.size>0){
-    const d=hs.left.pos.distanceTo(hs.right.pos);
-    if(bothStart===0){bothStart=performance.now();bothDist=d;}
-    else if(d-bothDist>0.1&&performance.now()-lastExtrude>800){
-      extrude(); lastExtrude=performance.now(); bothStart=0;
-    }
-  } else { bothStart=0; }
+  // ── Position palette above left wrist ──────────────────────────────────
+  if(leftWristPos){
+    positionPalette(leftWristPos, leftWristQuat, camPos);
+  }
 
-  drawHUD();
+  // ── Status HUD: floats in front of user at chin height ─────────────────
+  const fwdDir=new THREE.Vector3(0,0,-1).applyQuaternion(xrCam.quaternion);
+  statusHud.position.copy(camPos).addScaledVector(fwdDir,0.5);
+  statusHud.position.y-=0.12;
+  statusHud.lookAt(camPos);
+
+  // ── Right index finger interactions ────────────────────────────────────
+  if(rightIndexTip){
+    cursor.position.copy(rightIndexTip);
+
+    // 1. Button hover (palette)
+    updateButtonHover(rightIndexTip, dt);
+
+    // 2. Geometry interaction (dwell to select, drag if move tool)
+    const {hv,hf,ho}=detectGeomHover(rightIndexTip);
+    colorGizmos(hv,hf);
+
+    if(activeTool==='select'){
+      // Dwell select: hold near element for DWELL_MS
+      const target=editMode==='vertex'?hv:editMode==='face'?hf:ho;
+      if(target!==null&&target!==-1&&target===geomDwellTarget){
+        geomDwellTimer+=dt;
+        if(geomDwellTimer>=DWELL_MS){
+          // Toggle selection
+          if(editMode==='vertex'){
+            if(selVerts.has(hv)) selVerts.delete(hv); else selVerts.add(hv);
+          } else if(editMode==='face'){
+            if(selFaces.has(hf)) selFaces.delete(hf); else selFaces.add(hf);
+          } else if(editMode==='object'&&ho){
+            for(const m of meshObjects) m.mesh.material.color.setHex(0x1e3a8a);
+            selectedObject=ho; ho.mesh.material.color.setHex(0x2255dd);
+            buildGizmos();
+          }
+          geomDwellTimer=0;
+          drawStatus();
+        }
+        // Ring progress indicator on cursor
+        const p=Math.min(1,geomDwellTimer/DWELL_MS);
+        cursor.material.color.setHex(p>0.5?0xffffff:0xff8833);
+        cursor.scale.setScalar(1+p*0.5);
+      } else {
+        geomDwellTarget=target;
+        geomDwellTimer=0;
+        cursor.material.color.setHex(0xff8833);
+        cursor.scale.setScalar(1);
+      }
+    } else if(activeTool==='move'){
+      // Move: track finger delta and apply to selected
+      if(!drag){
+        const hasSel=(editMode==='vertex'&&selVerts.size>0)||(editMode==='face'&&selFaces.size>0)||(editMode==='object'&&selectedObject);
+        if(hasSel){
+          drag={start:rightIndexTip.clone(),orig:{}};
+          if(editMode==='vertex') for(const vi of selVerts) drag.orig[vi]=selectedObject.mo.verts[vi].clone();
+          else if(editMode==='face'){
+            const aff=new Set();
+            for(const fi of selFaces){const q=selectedObject.mo.quads[fi];[q.a,q.b,q.c,q.d].forEach(i=>aff.add(i));}
+            for(const vi of aff) drag.orig[vi]=selectedObject.mo.verts[vi].clone();
+          } else {
+            drag.origPos=selectedObject.mesh.position.clone();
+          }
+        }
+      }
+      if(drag&&selectedObject){
+        const delta=rightIndexTip.clone().sub(drag.start);
+        if(editMode==='object'&&drag.origPos){
+          selectedObject.mesh.position.copy(drag.origPos).add(delta);
+          syncGizmos();
+        } else {
+          for(const [vi,orig] of Object.entries(drag.orig)){
+            selectedObject.mo.verts[parseInt(vi)].copy(orig).add(delta);
+          }
+          selectedObject.rebuild(); syncGizmos(); colorGizmos();
+        }
+      }
+    }
+    prevRightPos.copy(rightIndexTip);
+  }
+
+  // Reset drag when switching tool away from move
+  if(activeTool!=='move') drag=null;
+
+  drawStatus();
   renderer.render(scene,camera);
 }
 
-// ── Desktop fallback orbit ────────────────────────────────────────────────
-let orbiting=false, lastM={x:0,y:0};
+// ── Desktop orbit fallback ────────────────────────────────────────────────
+let orbiting=false,lastM={x:0,y:0};
 let orb={theta:0.7,phi:1.1,r:2.2};
 const orbt=new THREE.Vector3(0,1.15,-0.5);
 function orbCam(){
@@ -538,8 +662,12 @@ document.addEventListener('contextmenu',e=>e.preventDefault());
 function desktopLoop(){
   requestAnimationFrame(desktopLoop);
   if(!renderer.xr.isPresenting){
-    hud.position.set(-0.45,1.5,-0.45); hud.lookAt(camera.position);
-    drawHUD(); renderer.render(scene,camera);
+    // Show palette in a fixed position for desktop preview
+    paletteGroup.position.set(-0.35,1.3,-0.5);
+    paletteGroup.lookAt(camera.position);
+    statusHud.position.set(0.3,1.1,-0.5);
+    statusHud.lookAt(camera.position);
+    drawStatus(); renderer.render(scene,camera);
   }
 }
 desktopLoop();
