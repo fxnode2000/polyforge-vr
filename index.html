@@ -12,8 +12,8 @@
     color:#8af; z-index:10;
   }
   #overlay h1 { font-size:2rem; letter-spacing:0.2em; margin-bottom:0.5rem; }
-  #overlay p  { color:#556; font-size:0.85rem; margin-bottom:2rem; letter-spacing:0.05em; }
-  #overlay .hint { font-size:0.75rem; color:#446; margin-top:1.5rem; max-width:420px; text-align:center; line-height:1.9; }
+  #overlay p  { color:#556; font-size:0.85rem; margin-bottom:2rem; }
+  #overlay .hint { font-size:0.75rem; color:#446; margin-top:1.5rem; max-width:440px; text-align:center; line-height:1.9; }
   #enter-btn {
     padding:14px 40px; font-size:1rem; letter-spacing:0.15em; font-family:monospace;
     background:transparent; color:#8af; border:1px solid #336; border-radius:4px; cursor:pointer;
@@ -30,13 +30,16 @@
   <button id="enter-btn">ENTER VR</button>
   <div id="no-xr">WebXR not supported — open in Quest Browser</div>
   <div class="hint">
-    <strong style="color:#8af">Mode buttons</strong> float above your left hand — tap with right index finger to switch<br><br>
-    <strong style="color:#7af">Right hand pinch gestures:</strong><br>
-    Pinch near vertex/face → select<br>
-    Pinch + hold + move → drag<br>
-    Both hands pinch + pull apart → extrude face<br>
-    Right fist → add new cube<br>
-    Left fist → delete selected
+    <strong style="color:#8af">Left-hand palette:</strong> tap OBJ / VERT / FACE to switch mode<br><br>
+    <strong style="color:#7af">Right hand (single):</strong><br>
+    Pinch near geometry → select + drag<br>
+    Fist → add cube<br><br>
+    <strong style="color:#7af">Both hands:</strong><br>
+    Both pinch + move apart/together → scale<br>
+    Both pinch + rotate → rotate object<br>
+    Both pinch + dominant axis pull → stretch<br>
+    Both pinch + pull apart (face mode) → extrude<br><br>
+    <strong style="color:#7af">Left fist:</strong> delete selected
   </div>
 </div>
 <canvas id="c"></canvas>
@@ -209,6 +212,34 @@ function colorGizmos(hovV=-1,hovF=-1){
   }
 }
 
+// ── Two-hand transform guide visuals ─────────────────────────────────────
+// A line between the two pinch points + axis indicator
+const guideMat = new THREE.LineBasicMaterial({ color:0x88ffcc, transparent:true, opacity:0.6, depthTest:false });
+const guideGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(),new THREE.Vector3()]);
+const guideLine = new THREE.Line(guideGeo, guideMat);
+scene.add(guideLine); guideLine.visible=false;
+
+// Axis lock indicator (colored dot at midpoint)
+const axisGeo = new THREE.SphereGeometry(0.018,8,8);
+const axisMesh = new THREE.Mesh(axisGeo, new THREE.MeshBasicMaterial({color:0x88ffcc,transparent:true,opacity:0.8,depthTest:false}));
+scene.add(axisMesh); axisMesh.visible=false;
+
+// Ghost mesh (shows original transform state during two-hand ops)
+let ghostMesh = null;
+function showGhost(){
+  if(!selectedObject) return;
+  hideGhost();
+  const g=selectedObject.mesh.geometry.clone();
+  ghostMesh=new THREE.Mesh(g,new THREE.MeshBasicMaterial({
+    color:0x2255dd,wireframe:true,transparent:true,opacity:0.25,depthTest:false
+  }));
+  ghostMesh.position.copy(selectedObject.mesh.position);
+  ghostMesh.rotation.copy(selectedObject.mesh.rotation);
+  ghostMesh.scale.copy(selectedObject.mesh.scale);
+  scene.add(ghostMesh);
+}
+function hideGhost(){ if(ghostMesh){scene.remove(ghostMesh);ghostMesh=null;} }
+
 // ── Operations ────────────────────────────────────────────────────────────
 function doExtrude(){
   if(!selectedObject||selFaces.size===0) return;
@@ -248,59 +279,66 @@ function doDelete(){
 function setMode(m){
   editMode=m; modeIdx=MODES.indexOf(m);
   selVerts.clear(); selFaces.clear();
-  buildGizmos(); updateModeButtons();
+  buildGizmos(); updateModeButtons(); drawHUD();
 }
 
-// ── Mode buttons (3 flat boxes above left wrist) ──────────────────────────
-const BTN_DEFS=[
-  {label:'OBJ',  mode:'object', color:0x112244, activeColor:0x1144cc},
-  {label:'VERT', mode:'vertex', color:0x112244, activeColor:0x1144cc},
-  {label:'FACE', mode:'face',   color:0x112244, activeColor:0x1144cc},
-];
-const BTN_W=0.07, BTN_H=0.032, BTN_D=0.007, BTN_GAP=0.010;
-
+// ── Single cycling mode button above left wrist ───────────────────────────
+const BTN_W=0.10, BTN_H=0.038, BTN_D=0.008;
 const modeGroup=new THREE.Group(); scene.add(modeGroup);
 
-BTN_DEFS.forEach((def,i)=>{
-  // 3D box
-  const geo=new THREE.BoxGeometry(BTN_W,BTN_H,BTN_D);
-  const mat=new THREE.MeshLambertMaterial({color:def.color});
-  const mesh=new THREE.Mesh(geo,mat);
-  const totalW=3*BTN_W+2*BTN_GAP;
-  mesh.position.x=i*(BTN_W+BTN_GAP)-totalW/2+BTN_W/2;
-  mesh.position.y=0;
-  modeGroup.add(mesh);
-  def._mesh=mesh;
+const cycleGeo=new THREE.BoxGeometry(BTN_W,BTN_H,BTN_D);
+const cycleMat=new THREE.MeshLambertMaterial({color:0x1144cc});
+const cycleMesh=new THREE.Mesh(cycleGeo,cycleMat);
+modeGroup.add(cycleMesh);
 
-  // Canvas label
-  const tc=document.createElement('canvas'); tc.width=128; tc.height=64;
-  const tx=tc.getContext('2d'); def._ctx=tx; def._canvas=tc;
-  const tex=new THREE.CanvasTexture(tc); def._tex=tex;
-  const lp=new THREE.Mesh(
-    new THREE.PlaneGeometry(BTN_W*0.88,BTN_H*0.88),
-    new THREE.MeshBasicMaterial({map:tex,transparent:true,depthTest:false})
-  );
-  lp.position.z=BTN_D/2+0.001;
-  mesh.add(lp);
-});
+const cycleCv=document.createElement('canvas'); cycleCv.width=256; cycleCv.height=96;
+const cycleCx=cycleCv.getContext('2d');
+const cycleTex=new THREE.CanvasTexture(cycleCv);
+const cycleLabel=new THREE.Mesh(
+  new THREE.PlaneGeometry(BTN_W*0.92,BTN_H*0.92),
+  new THREE.MeshBasicMaterial({map:cycleTex,transparent:true,depthTest:false})
+);
+cycleLabel.position.z=BTN_D/2+0.001;
+cycleMesh.add(cycleLabel);
+
+const MODE_COLORS={ object:0x1144cc, vertex:0x228844, face:0xaa4411 };
+const MODE_LABELS={ object:'OBJECT', vertex:'VERTEX', face:'FACE' };
+const MODE_NEXT  ={ object:'vertex', vertex:'face', face:'object' };
 
 function updateModeButtons(){
-  for(const def of BTN_DEFS){
-    const active=editMode===def.mode;
-    def._mesh.material.color.setHex(active?def.activeColor:def.color);
-    const tx=def._ctx, tc=def._canvas;
-    tc.width=128; tc.height=64;
-    tx.clearRect(0,0,128,64);
-    tx.fillStyle=active?'#ffffff':'#7799cc';
-    tx.font=`bold ${active?22:18}px monospace`;
-    tx.textAlign='center'; tx.textBaseline='middle';
-    tx.fillText(def.label,64,32);
-    def._tex.needsUpdate=true;
-  }
+  cycleMat.color.setHex(MODE_COLORS[editMode]);
+  cycleCv.width=256; cycleCv.height=96;
+  cycleCx.clearRect(0,0,256,96);
+  // small label at top: "MODE"
+  cycleCx.fillStyle='rgba(255,255,255,0.45)';
+  cycleCx.font='11px monospace';
+  cycleCx.textAlign='center'; cycleCx.textBaseline='middle';
+  cycleCx.fillText('MODE',128,20);
+  // big current mode name
+  cycleCx.fillStyle='#ffffff';
+  cycleCx.font='bold 26px monospace';
+  cycleCx.fillText(MODE_LABELS[editMode],128,54);
+  // small hint at bottom: next mode
+  cycleCx.fillStyle='rgba(255,255,255,0.4)';
+  cycleCx.font='10px monospace';
+  cycleCx.fillText('→ '+MODE_LABELS[MODE_NEXT[editMode]],128,78);
+  cycleTex.needsUpdate=true;
 }
 updateModeButtons();
 
-// ── Hand joint visuals ────────────────────────────────────────────────────
+let btnLastFired=0;
+function checkButtonTaps(pinchMid){
+  const world=new THREE.Vector3();
+  cycleMesh.getWorldPosition(world);
+  const now=performance.now();
+  if(pinchMid.distanceTo(world)<0.045&&now-btnLastFired>700){
+    modeIdx=(modeIdx+1)%MODES.length;
+    setMode(MODES[modeIdx]);
+    btnLastFired=now;
+  }
+}
+
+// ── Hand visuals ──────────────────────────────────────────────────────────
 const jGeo=new THREE.SphereGeometry(0.007,6,6);
 function makeHandVis(){
   const g=new THREE.Group(),joints=[];
@@ -312,31 +350,36 @@ function makeHandVis(){
 }
 const LH=makeHandVis(), RH=makeHandVis();
 
-// Pinch cursors
 const pcGeo=new THREE.SphereGeometry(0.016,10,10);
 const pcL=new THREE.Mesh(pcGeo,new THREE.MeshBasicMaterial({color:0x4488ff,transparent:true,opacity:0.75}));
 const pcR=new THREE.Mesh(pcGeo,new THREE.MeshBasicMaterial({color:0xff8833,transparent:true,opacity:0.75}));
 scene.add(pcL); scene.add(pcR);
 
-// ── HUD (status, floats in front of user) ────────────────────────────────
-const hc=document.createElement('canvas'); hc.width=320; hc.height=80;
+// ── HUD ───────────────────────────────────────────────────────────────────
+const hc=document.createElement('canvas'); hc.width=380; hc.height=100;
 const hx=hc.getContext('2d');
 const htex=new THREE.CanvasTexture(hc);
 const hud=new THREE.Mesh(
-  new THREE.PlaneGeometry(0.2,0.05),
+  new THREE.PlaneGeometry(0.22,0.058),
   new THREE.MeshBasicMaterial({map:htex,transparent:true,side:THREE.DoubleSide,depthTest:false})
 );
 scene.add(hud);
 
+let hudGesture='';
+
 function drawHUD(){
-  hx.clearRect(0,0,320,80);
+  hx.clearRect(0,0,380,100);
   hx.fillStyle='rgba(4,8,24,0.88)';
-  hx.beginPath(); hx.roundRect(2,2,316,76,10); hx.fill();
+  hx.beginPath(); hx.roundRect(2,2,376,96,10); hx.fill();
   hx.fillStyle='#4a6aaa'; hx.font='13px monospace'; hx.textAlign='center';
-  hx.fillText('MODE: '+editMode.toUpperCase(),160,28);
+  hx.fillText('MODE: '+editMode.toUpperCase(),190,26);
   const sc=editMode==='vertex'?selVerts.size:editMode==='face'?selFaces.size:(selectedObject?1:0);
   hx.fillStyle=sc>0?'#ff8833':'#2a3a5a';
-  hx.fillText('SELECTED: '+sc,160,52);
+  hx.fillText('SEL: '+sc,190,48);
+  if(hudGesture){
+    hx.fillStyle='#88ffcc'; hx.font='11px monospace';
+    hx.fillText(hudGesture,190,70);
+  }
   htex.needsUpdate=true;
 }
 drawHUD();
@@ -348,12 +391,19 @@ const hs={
 };
 const prev={left:{pinch:false,fist:false},right:{pinch:false,fist:false}};
 
+// Single-hand drag
 let drag=null;
-let lastAdd=0, lastDel=0, lastExtrude=0;
-let bothStart=0, bothDist=0;
 
-// Button tap state — fires once per entry, not on dwell
-const btnLastFired={};
+// Two-hand transform state
+let twoHand=null;
+// twoHand = {
+//   type: 'none'|'scale'|'rotate'|'stretch'|'extrude',
+//   startDist, startAngle, startAxis,
+//   startScale (THREE.Vector3), startRot (Euler), startPos,
+//   origVerts (for stretch/extrude)
+// }
+
+let lastAdd=0, lastDel=0, lastExtrude=0;
 
 // ── Hover detection ───────────────────────────────────────────────────────
 function detectGeomHover(tip){
@@ -380,25 +430,145 @@ function detectGeomHover(tip){
   return {hv,hf,ho};
 }
 
-// ── Button tap: fires when right pinch midpoint enters button volume ───────
-// No dwell — just crossing the threshold once = instant tap
-function checkButtonTaps(pinchMid){
-  const ENTER_R=0.035;
-  for(const def of BTN_DEFS){
-    const world=new THREE.Vector3();
-    def._mesh.getWorldPosition(world);
-    const inside=pinchMid.distanceTo(world)<ENTER_R;
-    const now=performance.now();
-    if(inside){
-      if(!btnLastFired[def.label]||now-btnLastFired[def.label]>600){
-        setMode(def.mode);
-        btnLastFired[def.label]=now;
-      }
+// ── Two-hand helpers ──────────────────────────────────────────────────────
+function handMidpoint(){ return hs.left.pos.clone().add(hs.right.pos).multiplyScalar(0.5); }
+function handDist(){     return hs.left.pos.distanceTo(hs.right.pos); }
+function handAngleXZ(){
+  const d=hs.right.pos.clone().sub(hs.left.pos);
+  return Math.atan2(d.x,d.z);
+}
+function handAxisVec(){ return hs.right.pos.clone().sub(hs.left.pos).normalize(); }
+
+// Determine dominant axis of hand vector (X/Y/Z)
+function dominantAxis(vec){
+  const ax=Math.abs(vec.x),ay=Math.abs(vec.y),az=Math.abs(vec.z);
+  if(ax>ay&&ax>az) return 'x';
+  if(ay>ax&&ay>az) return 'y';
+  return 'z';
+}
+
+// Save all vertex positions for stretch/extrude start
+function snapOrigVerts(){
+  if(!selectedObject) return {};
+  const o={};
+  selectedObject.mo.verts.forEach((v,i)=>o[i]=v.clone());
+  return o;
+}
+
+// ── Begin two-hand transform ──────────────────────────────────────────────
+function beginTwoHand(){
+  if(!selectedObject) return;
+  const dist=handDist();
+  const angle=handAngleXZ();
+  const axis=handAxisVec();
+  const dom=dominantAxis(axis);
+
+  // Decide type based on edit mode and geometry
+  // In face mode: extrude if faces selected, otherwise scale
+  // In object mode: scale + rotate
+  // Axis stretch when one axis is strongly dominant (>60% of magnitude)
+  const ax=Math.abs(axis.x),ay=Math.abs(axis.y),az=Math.abs(axis.z);
+  const maxA=Math.max(ax,ay,az);
+  const isDominant=maxA>0.65;
+
+  let type='scale';
+  if(editMode==='face'&&selFaces.size>0) type='extrude';
+  else if(editMode==='object'&&isDominant) type='stretch';
+  else if(editMode==='object') type='scale'; // will also track rotation
+
+  twoHand={
+    type,
+    startDist:dist,
+    startAngle:angle,
+    startAxis:dom,
+    startAxisVec:axis.clone(),
+    startScale:selectedObject.mesh.scale.clone(),
+    startRot:selectedObject.mesh.rotation.clone(),
+    startPos:selectedObject.mesh.position.clone(),
+    origVerts:snapOrigVerts(),
+    extruded:false,
+  };
+
+  showGhost();
+  guideLine.visible=true;
+  axisMesh.visible=true;
+
+  // Color guide by type
+  const col=type==='extrude'?0xff8833:type==='stretch'?0xffcc44:0x88ffcc;
+  guideMat.color.setHex(col);
+  axisMesh.material.color.setHex(col);
+  hudGesture=type.toUpperCase()+' ready';
+  drawHUD();
+}
+
+function endTwoHand(){
+  twoHand=null;
+  hideGhost();
+  guideLine.visible=false;
+  axisMesh.visible=false;
+  hudGesture='';
+  drawHUD();
+}
+
+// ── Apply two-hand transform each frame ───────────────────────────────────
+function applyTwoHand(){
+  if(!twoHand||!selectedObject) return;
+
+  const lp=hs.left.pos, rp=hs.right.pos;
+  const mid=handMidpoint();
+
+  // Update guide line
+  const gPos=guideGeo.getAttribute('position');
+  gPos.setXYZ(0,lp.x,lp.y,lp.z);
+  gPos.setXYZ(1,rp.x,rp.y,rp.z);
+  gPos.needsUpdate=true;
+  axisMesh.position.copy(mid);
+
+  const dist=handDist();
+  const angle=handAngleXZ();
+  const distRatio=dist/Math.max(twoHand.startDist,0.001);
+
+  if(twoHand.type==='scale'){
+    // Uniform scale from ratio
+    const s=twoHand.startScale.clone().multiplyScalar(distRatio);
+    selectedObject.mesh.scale.copy(s);
+    // Also track rotation — angle delta applied to Y axis
+    const angleDelta=angle-twoHand.startAngle;
+    selectedObject.mesh.rotation.y=twoHand.startRot.y+angleDelta;
+    hudGesture=`SCALE ${distRatio.toFixed(2)}x  ROT ${(angleDelta*180/Math.PI).toFixed(0)}°`;
+
+  } else if(twoHand.type==='stretch'){
+    // Stretch along dominant axis only
+    const s=twoHand.startScale.clone();
+    if(twoHand.startAxis==='x') s.x=twoHand.startScale.x*distRatio;
+    else if(twoHand.startAxis==='y') s.y=twoHand.startScale.y*distRatio;
+    else s.z=twoHand.startScale.z*distRatio;
+    selectedObject.mesh.scale.copy(s);
+    hudGesture=`STRETCH ${twoHand.startAxis.toUpperCase()} ${distRatio.toFixed(2)}x`;
+
+  } else if(twoHand.type==='extrude'){
+    // Extrude selected faces once threshold crossed, then let them drag
+    const spread=dist-twoHand.startDist;
+    if(!twoHand.extruded&&spread>0.08){
+      doExtrude();
+      twoHand.extruded=true;
+      twoHand.startDist=dist; // reset so further pull = move
+      hudGesture='EXTRUDED';
+      drawHUD();
     }
   }
+
+  drawHUD();
 }
 
 // ── XR loop ───────────────────────────────────────────────────────────────
+// Deadzone: require 1.5cm movement before confirming gesture start
+const DEADZONE=0.015;
+let rightStartPos=null, leftStartPos=null;
+let rightMoved=false, leftMoved=false;
+const CONFIRM_FRAMES=3;
+let bothPinchFrames=0;
+
 function xrLoop(ts,frame){
   if(!frame){renderer.render(scene,camera);return;}
   const session=renderer.xr.getSession();
@@ -421,31 +591,21 @@ function xrLoop(ts,frame){
       return new THREE.Vector3(m[12],m[13],m[14]);
     }
 
-    // Update visual dots
     for(let i=0;i<Math.min(joints.length,25);i++){
       const pose=frame.getJointPose(joints[i],ref);
       if(pose){const m=pose.transform.matrix;vis.joints[i].position.set(m[12],m[13],m[14]);vis.joints[i].visible=true;}
       else vis.joints[i].visible=false;
     }
 
-    const thumbTip=jp(J.THUMB_TIP), indexTip=jp(J.INDEX_TIP);
-    const midTip=jp(J.MIDDLE_TIP), ringTip=jp(J.RING_TIP), pinkyTip=jp(J.PINKY_TIP);
+    const thumbTip=jp(J.THUMB_TIP),indexTip=jp(J.INDEX_TIP);
+    const midTip=jp(J.MIDDLE_TIP),ringTip=jp(J.RING_TIP),pinkyTip=jp(J.PINKY_TIP);
     const wrist=jp(J.WRIST);
 
     if(!thumbTip||!indexTip) continue;
 
-    // ── Mode buttons float above left wrist ──────────────────────────────
-    if(side==='left'&&wrist){
-      modeGroup.position.copy(wrist);
-      modeGroup.position.y+=0.09;
-      modeGroup.lookAt(camPos);
-    }
-
-    // Pinch
     const pinchDist=thumbTip.distanceTo(indexTip);
     const isPinching=pinchDist<0.05;
 
-    // Fist: avg fingertip-to-wrist < 9cm
     let isFist=false;
     if(wrist&&midTip&&ringTip&&pinkyTip){
       const avg=(indexTip.distanceTo(wrist)+midTip.distanceTo(wrist)+
@@ -454,8 +614,12 @@ function xrLoop(ts,frame){
     }
 
     const pinchMid=thumbTip.clone().add(indexTip).multiplyScalar(0.5);
-    if(side==='left') pcL.position.copy(pinchMid);
-    else pcR.position.copy(pinchMid);
+    (side==='left'?pcL:pcR).position.copy(pinchMid);
+
+    if(side==='left'&&wrist){
+      modeGroup.position.copy(wrist); modeGroup.position.y+=0.09;
+      modeGroup.lookAt(camPos);
+    }
 
     const st=hs[side];
     const justPinch  =isPinching&&!prev[side].pinch;
@@ -465,10 +629,17 @@ function xrLoop(ts,frame){
 
     const now=performance.now();
 
-    // ── Left pinch enters button zone → instant mode switch ──────────────
-    if(side==='left') checkButtonTaps(pinchMid);
+    // ── Left: fist = delete ───────────────────────────────────────────────
+    if(side==='left'){
+      if(justFist&&!isPinching&&now-lastDel>1000){ doDelete(); lastDel=now; drawHUD(); }
+    }
 
-    // ── Right fist → add cube ─────────────────────────────────────────────
+    // ── Right: tap left-hand palette buttons with right pinch ─────────────
+    if(side==='right'){
+      checkButtonTaps(pinchMid);
+    }
+
+    // ── Right: fist = add cube ────────────────────────────────────────────
     if(side==='right'&&justFist&&!isPinching&&now-lastAdd>1000){
       const fwd=new THREE.Vector3(0,0,-0.5).applyQuaternion(xrCam.quaternion);
       const pos=new THREE.Vector3().setFromMatrixPosition(xrCam.matrixWorld).add(fwd);
@@ -476,85 +647,84 @@ function xrLoop(ts,frame){
       const o=createObject(cubeData(),pos);
       for(const m of meshObjects) m.mesh.material.color.setHex(0x1e3a8a);
       selectedObject=o; o.mesh.material.color.setHex(0x2255dd);
-      selVerts.clear(); selFaces.clear(); buildGizmos(); lastAdd=now;
+      selVerts.clear(); selFaces.clear(); buildGizmos(); lastAdd=now; drawHUD();
     }
 
-    // ── Left fist → delete selected ───────────────────────────────────────
-    if(side==='left'&&justFist&&!isPinching&&now-lastDel>1000){
-      doDelete(); lastDel=now;
-    }
-
-    // ── Right pinch start → select + begin drag ───────────────────────────
-    if(side==='right'&&justPinch&&!hs.left.pinch){
-      const {hv,hf,ho}=detectGeomHover(st.pos);
-      if(editMode==='vertex'&&hv>=0){
-        selVerts.add(hv); colorGizmos(hv,-1);
-        const orig={};
-        for(const vi of selVerts) orig[vi]=selectedObject.mo.verts[vi].clone();
-        drag={type:'vertex',start:st.pos.clone(),orig};
-      } else if(editMode==='face'&&hf>=0){
-        selFaces.add(hf); colorGizmos(-1,hf);
-        const aff=new Set();
-        for(const fi of selFaces){const q=selectedObject.mo.quads[fi];[q.a,q.b,q.c,q.d].forEach(i=>aff.add(i));}
-        const orig={};
-        for(const vi of aff) orig[vi]=selectedObject.mo.verts[vi].clone();
-        drag={type:'face',start:st.pos.clone(),orig};
-      } else if(editMode==='object'&&ho){
-        selectedObject=ho;
-        for(const m of meshObjects) m.mesh.material.color.setHex(0x1e3a8a);
-        ho.mesh.material.color.setHex(0x2255dd);
-        drag={type:'object',start:st.pos.clone(),origPos:ho.mesh.position.clone()};
-        buildGizmos();
-      }
-      drawHUD();
-    }
-
-    // ── Right pinch held → drag ───────────────────────────────────────────
-    if(side==='right'&&st.pinch&&drag&&selectedObject){
-      const delta=st.pos.clone().sub(drag.start);
-      if(drag.type==='object'){
-        selectedObject.mesh.position.copy(drag.origPos).add(delta);
-        syncGizmos();
-      } else {
-        for(const [vi,orig] of Object.entries(drag.orig)){
-          selectedObject.mo.verts[parseInt(vi)].copy(orig).add(delta);
+    // ── Single-hand right pinch → select + drag (only when left not pinching)
+    if(side==='right'&&!hs.left.pinch){
+      if(justPinch){
+        const {hv,hf,ho}=detectGeomHover(st.pos);
+        if(editMode==='vertex'&&hv>=0){
+          selVerts.add(hv); colorGizmos(hv,-1);
+          const orig={};
+          for(const vi of selVerts) orig[vi]=selectedObject.mo.verts[vi].clone();
+          drag={type:'vertex',start:st.pos.clone(),orig};
+        } else if(editMode==='face'&&hf>=0){
+          selFaces.add(hf); colorGizmos(-1,hf);
+          const aff=new Set();
+          for(const fi of selFaces){const q=selectedObject.mo.quads[fi];[q.a,q.b,q.c,q.d].forEach(i=>aff.add(i));}
+          const orig={};
+          for(const vi of aff) orig[vi]=selectedObject.mo.verts[vi].clone();
+          drag={type:'face',start:st.pos.clone(),orig};
+        } else if(editMode==='object'&&ho){
+          selectedObject=ho;
+          for(const m of meshObjects) m.mesh.material.color.setHex(0x1e3a8a);
+          ho.mesh.material.color.setHex(0x2255dd);
+          drag={type:'object',start:st.pos.clone(),origPos:ho.mesh.position.clone()};
+          buildGizmos();
         }
-        selectedObject.rebuild(); syncGizmos(); colorGizmos();
+        drawHUD();
       }
-    }
-
-    // ── Right pinch release ───────────────────────────────────────────────
-    if(side==='right'&&justUnpinch) drag=null;
-
-    // ── Hover highlight (right hand, not dragging) ────────────────────────
-    if(side==='right'&&!st.pinch&&!drag){
-      const {hv,hf}=detectGeomHover(st.pos);
-      colorGizmos(hv,hf);
+      if(st.pinch&&drag&&selectedObject){
+        const delta=st.pos.clone().sub(drag.start);
+        if(drag.type==='object'){
+          selectedObject.mesh.position.copy(drag.origPos).add(delta);
+          syncGizmos();
+        } else {
+          for(const [vi,orig] of Object.entries(drag.orig)){
+            selectedObject.mo.verts[parseInt(vi)].copy(orig).add(delta);
+          }
+          selectedObject.rebuild(); syncGizmos(); colorGizmos();
+        }
+      }
+      if(justUnpinch) drag=null;
+      if(!st.pinch&&!drag){
+        const {hv,hf}=detectGeomHover(st.pos);
+        colorGizmos(hv,hf);
+      }
     }
 
     prev[side]={pinch:isPinching,fist:isFist};
   }
 
-  // ── Both pinch + pull → extrude ──────────────────────────────────────────
-  if(hs.left.pinch&&hs.right.pinch&&editMode==='face'&&selFaces.size>0){
-    const d=hs.left.pos.distanceTo(hs.right.pos);
-    if(bothStart===0){bothStart=performance.now();bothDist=d;}
-    else if(d-bothDist>0.1&&performance.now()-lastExtrude>800){
-      doExtrude(); lastExtrude=performance.now(); bothStart=0;
-    }
-  } else { bothStart=0; }
+  // ── Two-hand gesture logic ────────────────────────────────────────────
+  const bothPinching=hs.left.pinch&&hs.right.pinch;
 
-  // HUD floats just below eye level in front of user
+  if(bothPinching){
+    bothPinchFrames++;
+    // Cancel single-hand drag immediately when left joins
+    drag=null;
+
+    if(bothPinchFrames>=CONFIRM_FRAMES&&!twoHand){
+      beginTwoHand();
+    }
+    if(twoHand) applyTwoHand();
+
+  } else {
+    if(twoHand) endTwoHand();
+    bothPinchFrames=0;
+  }
+
+  // HUD position
   const fwd=new THREE.Vector3(0,0,-1).applyQuaternion(xrCam.quaternion);
   hud.position.copy(camPos).addScaledVector(fwd,0.55);
   hud.position.y-=0.15;
   hud.lookAt(camPos);
 
-  drawHUD();
   renderer.render(scene,camera);
 }
 
-// ── Desktop orbit fallback ────────────────────────────────────────────────
+// ── Desktop orbit ─────────────────────────────────────────────────────────
 let orbiting=false,lastM={x:0,y:0};
 let orb={theta:0.7,phi:1.1,r:2.2};
 const orbt=new THREE.Vector3(0,1.15,-0.5);
@@ -580,10 +750,8 @@ document.addEventListener('contextmenu',e=>e.preventDefault());
 function desktopLoop(){
   requestAnimationFrame(desktopLoop);
   if(!renderer.xr.isPresenting){
-    modeGroup.position.set(-0.35,1.3,-0.5);
-    modeGroup.lookAt(camera.position);
-    hud.position.set(0,1.0,-0.6);
-    hud.lookAt(camera.position);
+    modeGroup.position.set(-0.35,1.3,-0.5); modeGroup.lookAt(camera.position);
+    hud.position.set(0,1.0,-0.6); hud.lookAt(camera.position);
     drawHUD(); renderer.render(scene,camera);
   }
 }
