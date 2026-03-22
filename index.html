@@ -282,59 +282,94 @@ function setMode(m){
   buildGizmos(); updateModeButtons(); drawHUD();
 }
 
-// ── Single cycling mode button above left wrist ───────────────────────────
-const BTN_W=0.10, BTN_H=0.038, BTN_D=0.008;
+// ── Palette: two cycling buttons above left wrist ─────────────────────────
+const BTN_W=0.10, BTN_H=0.038, BTN_D=0.008, BTN_GAP=0.012;
 const modeGroup=new THREE.Group(); scene.add(modeGroup);
 
-const cycleGeo=new THREE.BoxGeometry(BTN_W,BTN_H,BTN_D);
-const cycleMat=new THREE.MeshLambertMaterial({color:0x1144cc});
-const cycleMesh=new THREE.Mesh(cycleGeo,cycleMat);
-modeGroup.add(cycleMesh);
+function makeBtn(xOffset){
+  const geo=new THREE.BoxGeometry(BTN_W,BTN_H,BTN_D);
+  const mat=new THREE.MeshLambertMaterial({color:0x1144cc});
+  const mesh=new THREE.Mesh(geo,mat);
+  mesh.position.x=xOffset;
+  modeGroup.add(mesh);
+  const cv=document.createElement('canvas'); cv.width=256; cv.height=96;
+  const cx=cv.getContext('2d');
+  const tex=new THREE.CanvasTexture(cv);
+  const label=new THREE.Mesh(
+    new THREE.PlaneGeometry(BTN_W*0.92,BTN_H*0.92),
+    new THREE.MeshBasicMaterial({map:tex,transparent:true,depthTest:false})
+  );
+  label.position.z=BTN_D/2+0.001;
+  mesh.add(label);
+  return {mesh,mat,cv,cx,tex};
+}
 
-const cycleCv=document.createElement('canvas'); cycleCv.width=256; cycleCv.height=96;
-const cycleCx=cycleCv.getContext('2d');
-const cycleTex=new THREE.CanvasTexture(cycleCv);
-const cycleLabel=new THREE.Mesh(
-  new THREE.PlaneGeometry(BTN_W*0.92,BTN_H*0.92),
-  new THREE.MeshBasicMaterial({map:cycleTex,transparent:true,depthTest:false})
-);
-cycleLabel.position.z=BTN_D/2+0.001;
-cycleMesh.add(cycleLabel);
+const offset=(BTN_W+BTN_GAP)/2;
+const modeBtn=makeBtn(-offset);
+const xformBtn=makeBtn(+offset);
 
+// Mode button config
 const MODE_COLORS={ object:0x1144cc, vertex:0x228844, face:0xaa4411 };
 const MODE_LABELS={ object:'OBJECT', vertex:'VERTEX', face:'FACE' };
 const MODE_NEXT  ={ object:'vertex', vertex:'face', face:'object' };
 
+// Transform button config — move+rotate merged into 'grab'
+const XFORM_TOOLS=['grab','scale'];
+let xformToolIdx=0;
+let xformTool='grab'; // grab | scale
+const XFORM_COLORS={ grab:0x226688, scale:0x447722 };
+const XFORM_LABELS={ grab:'GRAB', scale:'SCALE' };
+const XFORM_NEXT  ={ grab:'scale', scale:'grab' };
+
+function drawBtn(btn,topLabel,mainLabel,nextLabel,color){
+  btn.mat.color.setHex(color);
+  btn.cv.width=256; btn.cv.height=96;
+  btn.cx.clearRect(0,0,256,96);
+  btn.cx.fillStyle='rgba(255,255,255,0.45)';
+  btn.cx.font='11px monospace';
+  btn.cx.textAlign='center'; btn.cx.textBaseline='middle';
+  btn.cx.fillText(topLabel,128,20);
+  btn.cx.fillStyle='#ffffff';
+  btn.cx.font='bold 26px monospace';
+  btn.cx.fillText(mainLabel,128,54);
+  btn.cx.fillStyle='rgba(255,255,255,0.4)';
+  btn.cx.font='10px monospace';
+  btn.cx.fillText('→ '+nextLabel,128,78);
+  btn.tex.needsUpdate=true;
+}
+
 function updateModeButtons(){
-  cycleMat.color.setHex(MODE_COLORS[editMode]);
-  cycleCv.width=256; cycleCv.height=96;
-  cycleCx.clearRect(0,0,256,96);
-  // small label at top: "MODE"
-  cycleCx.fillStyle='rgba(255,255,255,0.45)';
-  cycleCx.font='11px monospace';
-  cycleCx.textAlign='center'; cycleCx.textBaseline='middle';
-  cycleCx.fillText('MODE',128,20);
-  // big current mode name
-  cycleCx.fillStyle='#ffffff';
-  cycleCx.font='bold 26px monospace';
-  cycleCx.fillText(MODE_LABELS[editMode],128,54);
-  // small hint at bottom: next mode
-  cycleCx.fillStyle='rgba(255,255,255,0.4)';
-  cycleCx.font='10px monospace';
-  cycleCx.fillText('→ '+MODE_LABELS[MODE_NEXT[editMode]],128,78);
-  cycleTex.needsUpdate=true;
+  drawBtn(modeBtn,'MODE',MODE_LABELS[editMode],MODE_LABELS[MODE_NEXT[editMode]],MODE_COLORS[editMode]);
+  // Transform button only visible/active in object or face mode
+  const xformVisible=(editMode==='object'||editMode==='face');
+  xformBtn.mesh.visible=xformVisible;
+  if(xformVisible){
+    drawBtn(xformBtn,'TRANSFORM',XFORM_LABELS[xformTool],XFORM_LABELS[XFORM_NEXT[xformTool]],XFORM_COLORS[xformTool]);
+  }
 }
 updateModeButtons();
 
-let btnLastFired=0;
+let modeBtnLastFired=0, xformBtnLastFired=0;
 function checkButtonTaps(pinchMid){
-  const world=new THREE.Vector3();
-  cycleMesh.getWorldPosition(world);
   const now=performance.now();
-  if(pinchMid.distanceTo(world)<0.045&&now-btnLastFired>700){
+  // Mode button
+  const mw=new THREE.Vector3();
+  modeBtn.mesh.getWorldPosition(mw);
+  if(pinchMid.distanceTo(mw)<0.045&&now-modeBtnLastFired>700){
     modeIdx=(modeIdx+1)%MODES.length;
     setMode(MODES[modeIdx]);
-    btnLastFired=now;
+    modeBtnLastFired=now;
+  }
+  // Transform button (only when visible)
+  if(editMode==='object'||editMode==='face'){
+    const xw=new THREE.Vector3();
+    xformBtn.mesh.getWorldPosition(xw);
+    if(pinchMid.distanceTo(xw)<0.045&&now-xformBtnLastFired>700){
+      xformToolIdx=(xformToolIdx+1)%XFORM_TOOLS.length;
+      xformTool=XFORM_TOOLS[xformToolIdx];
+      updateModeButtons(); drawHUD();
+      xformBtnLastFired=now;
+    }
   }
 }
 
@@ -463,28 +498,33 @@ function beginTwoHand(){
   const axis=handAxisVec();
   const dom=dominantAxis(axis);
 
-  // Decide type based on edit mode and geometry
-  // In face mode: extrude if faces selected, otherwise scale
-  // In object mode: scale + rotate
-  // Axis stretch when one axis is strongly dominant (>60% of magnitude)
-  const ax=Math.abs(axis.x),ay=Math.abs(axis.y),az=Math.abs(axis.z);
-  const maxA=Math.max(ax,ay,az);
-  const isDominant=maxA>0.65;
-
-  let type='scale';
+  // Face mode with selection: extrude. Otherwise use xformTool.
+  let type;
   if(editMode==='face'&&selFaces.size>0) type='extrude';
-  else if(editMode==='object'&&isDominant) type='stretch';
-  else if(editMode==='object') type='scale'; // will also track rotation
+  else type=xformTool; // 'grab' | 'scale'
+
+  // For grab: capture hand frame as a quaternion so we can track
+  // both translation (midpoint delta) and rotation (hand vector rotation)
+  const mid=handMidpoint();
+  // Build a quaternion representing the orientation of the hand-pair at start
+  // We use the vector from left→right hand as the "forward" of the frame
+  const handVec=hs.right.pos.clone().sub(hs.left.pos).normalize();
+  const startQ=new THREE.Quaternion().setFromUnitVectors(
+    new THREE.Vector3(1,0,0), // reference axis
+    handVec
+  );
 
   twoHand={
     type,
     startDist:dist,
     startAngle:angle,
     startAxis:dom,
-    startAxisVec:axis.clone(),
+    startQ,                               // hand-pair quaternion at start
+    startObjQ:new THREE.Quaternion().setFromEuler(selectedObject.mesh.rotation),
     startScale:selectedObject.mesh.scale.clone(),
     startRot:selectedObject.mesh.rotation.clone(),
     startPos:selectedObject.mesh.position.clone(),
+    midStart:mid.clone(),
     origVerts:snapOrigVerts(),
     extruded:false,
   };
@@ -493,11 +533,10 @@ function beginTwoHand(){
   guideLine.visible=true;
   axisMesh.visible=true;
 
-  // Color guide by type
-  const col=type==='extrude'?0xff8833:type==='stretch'?0xffcc44:0x88ffcc;
+  const col=type==='extrude'?0xff8833:type==='scale'?0x88ffcc:0x88ccff;
   guideMat.color.setHex(col);
   axisMesh.material.color.setHex(col);
-  hudGesture=type.toUpperCase()+' ready';
+  hudGesture=type.toUpperCase()+' active';
   drawHUD();
 }
 
@@ -525,34 +564,41 @@ function applyTwoHand(){
   axisMesh.position.copy(mid);
 
   const dist=handDist();
-  const angle=handAngleXZ();
   const distRatio=dist/Math.max(twoHand.startDist,0.001);
+  const midDelta=mid.clone().sub(twoHand.midStart);
 
-  if(twoHand.type==='scale'){
-    // Uniform scale from ratio
+  if(twoHand.type==='grab'){
+    // ── Translation: midpoint delta ───────────────────────────────────────
+    selectedObject.mesh.position.copy(twoHand.startPos).add(midDelta);
+
+    // ── Rotation: delta quaternion from start hand-pair frame to current ──
+    // Current hand vector
+    const handVec=rp.clone().sub(lp).normalize();
+    const currentQ=new THREE.Quaternion().setFromUnitVectors(
+      new THREE.Vector3(1,0,0),
+      handVec
+    );
+    // Delta = currentQ * inverse(startQ)
+    const deltaQ=currentQ.clone().multiply(twoHand.startQ.clone().invert());
+    // Apply delta to original object rotation
+    const newQ=deltaQ.clone().multiply(twoHand.startObjQ);
+    selectedObject.mesh.setRotationFromQuaternion(newQ);
+
+    syncGizmos();
+    const angleDeg=(2*Math.acos(Math.min(1,Math.abs(deltaQ.w)))*180/Math.PI).toFixed(0);
+    hudGesture=`GRAB  rot ${angleDeg}°`;
+
+  } else if(twoHand.type==='scale'){
     const s=twoHand.startScale.clone().multiplyScalar(distRatio);
     selectedObject.mesh.scale.copy(s);
-    // Also track rotation — angle delta applied to Y axis
-    const angleDelta=angle-twoHand.startAngle;
-    selectedObject.mesh.rotation.y=twoHand.startRot.y+angleDelta;
-    hudGesture=`SCALE ${distRatio.toFixed(2)}x  ROT ${(angleDelta*180/Math.PI).toFixed(0)}°`;
-
-  } else if(twoHand.type==='stretch'){
-    // Stretch along dominant axis only
-    const s=twoHand.startScale.clone();
-    if(twoHand.startAxis==='x') s.x=twoHand.startScale.x*distRatio;
-    else if(twoHand.startAxis==='y') s.y=twoHand.startScale.y*distRatio;
-    else s.z=twoHand.startScale.z*distRatio;
-    selectedObject.mesh.scale.copy(s);
-    hudGesture=`STRETCH ${twoHand.startAxis.toUpperCase()} ${distRatio.toFixed(2)}x`;
+    hudGesture=`SCALE ${distRatio.toFixed(2)}x`;
 
   } else if(twoHand.type==='extrude'){
-    // Extrude selected faces once threshold crossed, then let them drag
     const spread=dist-twoHand.startDist;
     if(!twoHand.extruded&&spread>0.08){
       doExtrude();
       twoHand.extruded=true;
-      twoHand.startDist=dist; // reset so further pull = move
+      twoHand.startDist=dist;
       hudGesture='EXTRUDED';
       drawHUD();
     }
@@ -672,6 +718,16 @@ function xrLoop(ts,frame){
           ho.mesh.material.color.setHex(0x2255dd);
           drag={type:'object',start:st.pos.clone(),origPos:ho.mesh.position.clone()};
           buildGizmos();
+        } else {
+          // Pinched empty space — deselect everything
+          selVerts.clear(); selFaces.clear();
+          if(editMode==='object'){
+            for(const m of meshObjects) m.mesh.material.color.setHex(0x1e3a8a);
+            selectedObject=null;
+            clearGizmos();
+          } else {
+            colorGizmos();
+          }
         }
         drawHUD();
       }
